@@ -22,6 +22,7 @@
 #include <iterator>
 #include <list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -35,10 +36,9 @@
 #include "tensorflow/lite/experimental/litert/c/litert_op_code.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_buffer_ref.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_expected.h"
-#include "tensorflow/lite/experimental/litert/core/byte_code_util.h"
+#include "tensorflow/lite/experimental/litert/core/model/buffer_manager.h"
 #include "tensorflow/lite/experimental/litert/core/model/ir_allocator.h"
 #include "tensorflow/lite/experimental/litert/core/util/flatbuffer_tools.h"
-#include "tensorflow/lite/schema/schema_generated.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 // Internal LiteRtIR
@@ -100,16 +100,6 @@ const ::litert::internal::TflOptions& GetTflOptions(const LiteRtOpT& litert_op);
 
 ::litert::internal::TflOptions&& TakeTflOptions(LiteRtOpT& litert_op);
 
-// WEIGHT
-
-const ::litert::internal::TflBuffer& GetTflBuffer(
-    const LiteRtWeightsT& litert_weights);
-
-litert::internal::TflBufferPtr TakeTflBuffer(LiteRtWeightsT& litert_weights);
-
-void SetTflBuffer(LiteRtWeightsT& litert_weights,
-                  litert::internal::TflBufferPtr tfl_buffer);
-
 // MODEL
 
 const std::vector<::litert::internal::TflOpCodePtr>& GetTflOpCodes(
@@ -121,10 +111,10 @@ void SetTflOpCodes(LiteRtModelT& litert_model, Arg&& arg);
 std::vector<::litert::internal::TflOpCodePtr>&& TakeTflOpCodes(
     LiteRtModelT& litert_model);
 
-void SetTflInitFlatbuffer(LiteRtModelT& litert_model,
-                          ::litert::BufferRef<uint8_t> init_flatbuffer);
+void SetTflFlatbuffer(LiteRtModelT& litert_model,
+                      ::litert::internal::FlatbufferWrapper&& tfl_flatbuffer);
 
-::litert::BufferRef<uint8_t> GetTflInitFlatbuffer(
+const ::litert::internal::FlatbufferWrapper& GetTflFlatbuffer(
     const LiteRtModelT& litert_model);
 
 }  // namespace detail
@@ -134,7 +124,7 @@ void SetTflInitFlatbuffer(LiteRtModelT& litert_model,
 //
 
 // // For requesting opaque data stored within IR.
-using BufferProvider = std::function<uint8_t*(size_t size)>;
+using ScratchBufferProvider = std::function<uint8_t*(size_t size)>;
 
 // TENSOR TYPE
 
@@ -176,7 +166,7 @@ template <class Scales, class ZeroPoints>
 Quantization MakePerChannelQuantization(const Scales& scales,
                                         const ZeroPoints& zero_points,
                                         int32_t quantized_dim,
-                                        BufferProvider buffer_provider) {
+                                        ScratchBufferProvider buffer_provider) {
   const auto size = std::size(scales);
   ABSL_DCHECK_EQ(size, std::size(zero_points));
 
@@ -209,42 +199,73 @@ class LiteRtWeightsT {
   using OwnedBuffer = ::litert::OwningBufferRef<uint8_t>;
 
  public:
+  using BufferId = ::litert::internal::BufferManager::BufferId;
+  using BufferManager = ::litert::internal::BufferManager;
+
   // Underlying data.
-  ::litert::BufferRef<uint8_t> Buf() const {
-    return ::litert::BufferRef<uint8_t>(tfl_buf_->data.data(),
-                                        tfl_buf_->data.size());
+  ::litert::BufferRef<uint8_t> Buffer() const {
+    auto buf = GetBufferManager()->GetBuffer(buffer_id_);
+    ABSL_DCHECK(buf.HasValue());
+    return *buf;
   }
 
-  // Set weights via copied data.
-  void SetFromBuf(::litert::BufferRef<uint8_t> buf) {
-    tfl_buf_->data.assign(buf.Data(), buf.Data() + buf.Size());
+  // Set the buffer manager, expects a stable pointer. A default buffer manager
+  // will be initialized for convenience but most cases will share a single
+  // buffer manager owned by the model.
+  void SetBufferManager(BufferManager* buffer_manager) {
+    buffer_manager_ = buffer_manager;
   }
 
-  // Set via copied vec.
-  void SetFromVec(const std::vector<uint8_t>& vec) { tfl_buf_->data = vec; }
+  // Get the underlying buffer manager.
+  BufferManager* GetBufferManager() const {
+    if (std::holds_alternative<BufferManager*>(buffer_manager_)) {
+      return std::get<BufferManager*>(buffer_manager_);
+    } else {
+      return std::get<BufferManager::Ptr>(buffer_manager_).get();
+    }
+  }
+
+  // Set from a pre-registered buffer. This expects buffer was registered
+  // with the same manager.
+  void SetBufferId(BufferId buffer_id) { buffer_id_ = buffer_id; }
+
+  // Get the id generated for the buffer by the manager.
+  BufferId GetBufferId() const { return buffer_id_; }
 
   // IR is generally, default constructible and movable but not copyable.
-  LiteRtWeightsT()
-      : tfl_buf_(std::make_unique<::litert::internal::TflBuffer>()) {}
+  LiteRtWeightsT() = default;
+  explicit LiteRtWeightsT(BufferManager* buffer_manager)
+      : buffer_manager_(buffer_manager) {}
   LiteRtWeightsT(const LiteRtWeightsT&) = delete;
   LiteRtWeightsT(LiteRtWeightsT&&) = default;
   LiteRtWeightsT& operator=(const LiteRtWeightsT&) = delete;
   LiteRtWeightsT& operator=(LiteRtWeightsT&&) = default;
 
-  // Friendship for internal tflite details.
-  friend const ::litert::internal::TflBuffer& detail::GetTflBuffer(
-      const LiteRtWeightsT& litert_weights);
-
-  friend litert::internal::TflBufferPtr detail::TakeTflBuffer(
-      LiteRtWeightsT& litert_weights);
-
-  friend void detail::SetTflBuffer(LiteRtWeightsT& litert_weights,
-                                   litert::internal::TflBufferPtr tfl_buffer);
-
  private:
-  // TFLITE
-  ::litert::internal::TflBufferPtr tfl_buf_;
+  BufferId buffer_id_ = BufferManager::kEmptyBufferId;
+  std::variant<BufferManager*, BufferManager::Ptr> buffer_manager_ =
+      std::make_unique<BufferManager>();
 };
+
+// Set weights via an unowned buffer. Caller is responsible for ensuring the
+// buffer outlives the weights. Registers the buffer with the manager.
+inline void SetWeightsFromUnownedBuffer(
+    LiteRtWeightsT& weights, ::litert::BufferRef<uint8_t> buffer,
+    std::optional<litert::internal::BufferContext> context = std::nullopt) {
+  auto* manager = weights.GetBufferManager();
+  auto buf_id = manager->RegisterNonOwnedBuffer(buffer, context);
+  weights.SetBufferId(buf_id);
+}
+
+// Set weights via an unowned buffer. Caller is responsible for ensuring the
+// buffer outlives the weights. Registers the buffer with the manager.
+inline void SetWeightsFromOwnedBuffer(
+    LiteRtWeightsT& weights, ::litert::OwningBufferRef<uint8_t>&& buffer,
+    std::optional<litert::internal::BufferContext> context = std::nullopt) {
+  auto* manager = weights.GetBufferManager();
+  auto buf_id = manager->RegisterOwnedBuffer(std::move(buffer), context);
+  weights.SetBufferId(buf_id);
+}
 
 // Fundamental value in a litert program, "edges" in the graph.
 class LiteRtTensorT {
@@ -334,19 +355,23 @@ class LiteRtTensorT {
 
   // Get a new buffer that will live as long as this tensor. Used for storing
   // various buffers passed through c-api (dims, quantization etc).
-  uint8_t* RequestBuffer(size_t size) {
+  // NOTE: This is just scratch data unrelated to weights buffer.
+  uint8_t* RequestScratchBuffer(size_t size) {
     user_data_.push_back(std::make_unique<uint8_t[]>(size));
     return user_data_.back().get();
   }
 
-  // Allow for implicit conversion to bufer provider.
+  // Allow for implicit conversion to scratch buffer provider.
+  // NOTE: This is just scratch data unrelated to weights buffer.
   // NOLINTNEXTLINE
-  operator BufferProvider() & {
-    return [this](auto s) { return this->RequestBuffer(s); };
+  operator ScratchBufferProvider() & {
+    return [this](auto s) { return this->RequestScratchBuffer(s); };
   }
 
   // IR is generally, default constructible and movable but not copyable.
   LiteRtTensorT() = default;
+  LiteRtTensorT(::litert::internal::BufferManager* buffer_manager)
+      : weights_(buffer_manager) {}
   LiteRtTensorT(const LiteRtTensorT&) = delete;
   LiteRtTensorT(LiteRtTensorT&&) = default;
   LiteRtTensorT& operator=(const LiteRtTensorT&) = delete;
@@ -536,7 +561,13 @@ class LiteRtSubgraphT {
   // reference to it.
   template <class... Args>
   LiteRtTensorT& EmplaceTensor(Args&&... args) {
-    return tensors_.EmplaceBack(std::forward<Args>(args)...);
+    if (buffer_manager_ == nullptr) {
+      std::cerr << "Emplacing tensor without buffer manager \n";
+      return tensors_.EmplaceBack(std::forward<Args>(args)...);
+    } else {
+      // std::cerr << "Emplacing tensor with buffer manager \n";
+      return tensors_.EmplaceBack(buffer_manager_, std::forward<Args>(args)...);
+    }
   }
 
   // Construct a new op which will be owned by this subgraph and get a
@@ -559,12 +590,22 @@ class LiteRtSubgraphT {
 
   // IR is generally, default constructible and movable but not copyable.
   LiteRtSubgraphT() = default;
+  LiteRtSubgraphT(::litert::internal::BufferManager* buffer_manager)
+      : buffer_manager_(buffer_manager) {};
   LiteRtSubgraphT(const LiteRtSubgraphT&) = delete;
   LiteRtSubgraphT(LiteRtSubgraphT&&) = default;
   LiteRtSubgraphT& operator=(const LiteRtSubgraphT&) = delete;
   LiteRtSubgraphT& operator=(LiteRtSubgraphT&&) = default;
 
+  // Get the buffer manager for this subgraph.
+  ::litert::internal::BufferManager* GetBufferManager() const {
+    return buffer_manager_;
+  }
+
  private:
+  // If null, tensors emplaced will own their own buffer managers.
+  ::litert::internal::BufferManager* buffer_manager_ = nullptr;
+
   LiteRtTensorT::Alloc tensors_;
 
   LiteRtOpT::Alloc ops_;
@@ -644,19 +685,25 @@ LiteRtSignatureT MakeDefaultSignature(LiteRtSubgraph subgraph);
 // Root-level graph object for litert programs. Manages the storage
 // of all litert graph objects within.
 class LiteRtModelT {
- private:
-  using MetadataMap =
-      absl::flat_hash_map<std::string, litert::OwningBufferRef<uint8_t>>;
-
  public:
   using Ref = std::reference_wrapper<LiteRtModelT>;
   using Ptr = std::unique_ptr<LiteRtModelT>;
   using TflOpCodes = std::vector<litert::internal::TflOpCodePtr>;
 
+  using BufferManager = ::litert::internal::BufferManager;
+  using BufferId = BufferManager::BufferId;
+
+  using OpAssetReference = std::pair<BufferId, std::string>;
+  using OpAssetMap = absl::flat_hash_map<LiteRtOp, OpAssetReference>;
+
+  using MetadataMap = absl::flat_hash_map<std::string, BufferId>;
+
+  using TflFlatbuffer = ::litert::internal::FlatbufferWrapper;
+
   // TODO replace this with the index of the default signature.
   static constexpr const size_t kMainSubgraphIndex = 0;
 
-  // OBSERVERS
+  // SUBGRAPHS
 
   // Get a stable pointer for all of the subgraphs within this model.
   absl::Span<LiteRtSubgraph> Subgraphs() { return subgraphs_.Elements(); }
@@ -690,44 +737,15 @@ class LiteRtModelT {
     return ::litert::Error(kLiteRtStatusErrorNotFound, "Signature not found");
   }
 
-  // All signatures registered with this model.
-  absl::Span<LiteRtSignature> Signatures() const {
-    return signatures_.Elements();
-  }
-
-  // Look up metadata by key, getting a view of its buffer as a string
-  // if it exists.
-  litert::Expected<litert::BufferRef<uint8_t>> FindMetadata(
-      absl::string_view key) const {
-    if (auto it = metadata_.find(key); it != metadata_.end()) {
-      return it->second;
-    }
-    return ::litert::Error(kLiteRtStatusErrorNotFound);
-  }
-
-  // Metadata key-val pair iterator.
-  MetadataMap::iterator MetadataBegin() { return metadata_.begin(); }
-  MetadataMap::iterator MetadataEnd() { return metadata_.end(); }
-
-  // Remvoe and take ownership of the metadata under given key if it exists.
-  litert::Expected<litert::OwningBufferRef<uint8_t>> PopMetadata(
-      absl::string_view key) {
-    if (auto it = metadata_.find(key); it != metadata_.end()) {
-      return metadata_.extract(it).mapped();
-    }
-    return ::litert::Error(kLiteRtStatusErrorNotFound);
-  }
-
-  // BUILDERS
-
   // Build a new subgraph and get a stable reference to it.
   template <class... Args>
   LiteRtSubgraphT& EmplaceSubgraph(Args&&... args) {
-    return subgraphs_.EmplaceBack(std::forward<Args>(args)...);
+    return subgraphs_.EmplaceBack(Buffers(), std::forward<Args>(args)...);
   }
 
   // Transfers given subgraphs into this model.
   void TransferSubgraphs(LiteRtSubgraphT::Alloc&& subgraphs) {
+    // TODO: Consider mergeing buffer managers here.
     subgraphs_.Transfer(std::move(subgraphs));
   }
 
@@ -735,16 +753,11 @@ class LiteRtModelT {
   // greater or equal to current.
   void ResizeSubgraphsDown(size_t size) { subgraphs_.ResizeDown(size); }
 
-  // Adds a new metadata buffer to the model. Fails if it already exists.
-  template <class... Args>
-  LiteRtStatus PushMetadata(absl::string_view key, Args&&... args) {
-    if (metadata_.contains(key)) {
-      return kLiteRtStatusErrorInvalidArgument;
-    }
-    metadata_.insert(
-        {std::string(key.begin(), key.end()),
-         ::litert::OwningBufferRef<uint8_t>(std::forward<Args>(args)...)});
-    return kLiteRtStatusOk;
+  // SIGNATURES
+
+  // All signatures registered with this model.
+  absl::Span<LiteRtSignature> Signatures() const {
+    return signatures_.Elements();
   }
 
   // Construct a new signature for this model.
@@ -753,12 +766,69 @@ class LiteRtModelT {
     return signatures_.EmplaceBack(std::forward<Args>(args)...);
   }
 
+  // METADATA
+
+  // Look up metadata by key, getting a view of its buffer as a string
+  // if it exists.
+  litert::Expected<litert::BufferRef<uint8_t>> FindMetadata(
+      absl::string_view key) const {
+    if (auto it = metadata_.find(key); it != metadata_.end()) {
+      const auto buf_id = it->second;
+      return Buffers()->GetBuffer(buf_id);
+    }
+    return ::litert::Error(kLiteRtStatusErrorNotFound);
+  }
+
+  // Metadata key-val pair iterator.
+  MetadataMap::iterator MetadataBegin() { return metadata_.begin(); }
+  MetadataMap::iterator MetadataEnd() { return metadata_.end(); }
+
+  // Adds a new metadata buffer to the model. Fails if it already exists.
+  template <class... Args>
+  LiteRtStatus PushMetadata(absl::string_view key, Args&&... args) {
+    if (metadata_.contains(key)) {
+      return kLiteRtStatusErrorInvalidArgument;
+    }
+    const auto buf_id = Buffers()->RegisterOwnedBuffer(
+        ::litert::OwningBufferRef<uint8_t>(std::forward<Args>(args)...));
+    metadata_.emplace(std::make_pair(std::string(key), buf_id));
+    return kLiteRtStatusOk;
+  }
+
+  // BUFFERS
+
+  // Get stable pointer to buffer manager object.
+  BufferManager* Buffers() const { return buffer_manager_.get(); }
+
+  // Attach an asset to the given op. An asset is a non-tensor buffer
+  // that is used by the op. Assets may be referenced by multiple ops.
+  // Each edge from an op to an asset is identified by a name. All buffers
+  // are appended to the model upon serialization and referenced by offset
+  // relative to the start of the model within the referring op's custom
+  // options.
+  void AttachAssetToOp(LiteRtOp op, BufferId buf_id, std::string name) {
+    OpAssetReference ref = {buf_id, std::move(name)};
+    external_buffer_map_.emplace(op, std::move(ref));
+  }
+
+  // Returns an immutable view of the external buffer and the name of the edge
+  // if the given op has one attached.
+  litert::Expected<OpAssetReference> FindOpAsset(LiteRtOp op) {
+    if (auto it = external_buffer_map_.find(op);
+        it != external_buffer_map_.end()) {
+      return it->second;
+    }
+    return ::litert::Error(kLiteRtStatusErrorNotFound);
+  }
+
   // IR is generally, default constructible and movable but not copyable.
   LiteRtModelT() = default;
   LiteRtModelT(const LiteRtModelT&) = delete;
   LiteRtModelT(LiteRtModelT&&) = default;
   LiteRtModelT& operator=(const LiteRtModelT&) = delete;
   LiteRtModelT& operator=(LiteRtModelT&&) = default;
+
+  // TFLITE
 
   // Friendship for internal tflite details.
   friend const TflOpCodes& detail::GetTflOpCodes(
@@ -769,22 +839,33 @@ class LiteRtModelT {
 
   friend TflOpCodes&& detail::TakeTflOpCodes(LiteRtModelT& litert_model);
 
-  friend void detail::SetTflInitFlatbuffer(
-      LiteRtModelT& litert_model, ::litert::BufferRef<uint8_t> init_flatbuffer);
+  friend void detail::SetTflFlatbuffer(LiteRtModelT& litert_model,
+                                       TflFlatbuffer&& tfl_flatbuffer);
 
-  friend ::litert::BufferRef<uint8_t> detail::GetTflInitFlatbuffer(
+  friend const TflFlatbuffer& detail::GetTflFlatbuffer(
       const LiteRtModelT& litert_model);
+
+  explicit LiteRtModelT(TflFlatbuffer&& tfl_flatbuffer)
+      : tfl_flatbuffer_(std::move(tfl_flatbuffer)) {}
 
  private:
   LiteRtSubgraphT::Alloc subgraphs_;
   LiteRtSignatureT::Alloc signatures_;
 
   MetadataMap metadata_;
+  OpAssetMap external_buffer_map_;
+
+  // Use unique ptr here to keep stable.
+  BufferManager::Ptr buffer_manager_ = std::make_unique<BufferManager>();
 
   // TFLITE
   TflOpCodes tfl_operator_codes_;
-  litert::BufferRef<uint8_t> tfl_init_flatbuffer_;
+  TflFlatbuffer tfl_flatbuffer_;
 };
+
+// Get the custom op code from a given op if it is a custom op.
+std::optional<std::string> GetCustomOpCode(const LiteRtModelT& model,
+                                           const LiteRtOpT& op);
 
 // Lookup subgraph by signature name.
 ::litert::Expected<LiteRtSubgraph> LookupSubgraph(
@@ -794,21 +875,26 @@ class LiteRtModelT {
 // Utils
 //
 
-// Used for communicating selections of ops.
+using LiteRtOpWithPartitionIndex = std::pair<LiteRtOp, LiteRtParamIndex>;
+
+// Used for communicating selections of ops in when partitioning.
 class LiteRtOpListT {
  public:
-  void Push(LiteRtOp op) { ops_.push_back(op); }
+  void Push(LiteRtOp op, LiteRtParamIndex partition_index = 0) {
+    values_.push_back(LiteRtOpWithPartitionIndex(op, partition_index));
+  }
 
-  std::vector<LiteRtOp> Vec() const {
-    std::vector<LiteRtOp> res;
-    res.reserve(ops_.size());
-    res.assign(ops_.begin(), ops_.end());
-    return res;
+  std::vector<LiteRtOpWithPartitionIndex> Values() const {
+    std::vector<LiteRtOpWithPartitionIndex> ops;
+    ops.reserve(values_.size());
+    ops.assign(values_.begin(), values_.end());
+
+    return ops;
   }
 
  private:
   // Investigate if this is possible with vector (hit some issues).
-  std::list<LiteRtOp> ops_;
+  std::list<LiteRtOpWithPartitionIndex> values_;
 };
 
 namespace detail {

@@ -47,6 +47,7 @@
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -68,18 +69,19 @@
 #include "xla/python/ifrt_proxy/common/proto_util.h"
 #include "xla/python/ifrt_proxy/common/types.h"
 #include "xla/python/ifrt_proxy/common/types.pb.h"
+#include "xla/python/ifrt_proxy/common/versions.h"
 #include "xla/python/ifrt_proxy/server/host_buffer.h"
 #include "xla/python/ifrt_proxy/server/host_callback.h"
 #include "xla/python/ifrt_proxy/server/version.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/status_to_from_proto.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/status_to_from_proto.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace ifrt {
@@ -633,9 +635,8 @@ IfrtBackend::HandleMakeArrayFromHostBufferRequest(
       request->mutable_make_array_from_host_buffer_request();
 
   TF_ASSIGN_OR_RETURN(
-      auto sharding, Sharding::FromProto(
-                         absl::bind_front(&Client::LookupDevice, client_.get()),
-                         make_array_request->sharding()));
+      auto sharding,
+      Sharding::FromProto(client_.get(), make_array_request->sharding()));
 
   const auto byte_strides = [&]() -> std::optional<std::vector<int64_t>> {
     if (!make_array_request->has_byte_strides()) return std::nullopt;
@@ -718,9 +719,8 @@ IfrtBackend::HandleAssembleArrayFromSingleDeviceArraysRequest(
 
   TF_ASSIGN_OR_RETURN(Shape shape, Shape::FromProto(assemble_request.shape()));
   TF_ASSIGN_OR_RETURN(
-      auto sharding, Sharding::FromProto(
-                         absl::bind_front(&Client::LookupDevice, client_.get()),
-                         assemble_request.sharding()));
+      auto sharding,
+      Sharding::FromProto(client_.get(), assemble_request.sharding()));
   TF_ASSIGN_OR_RETURN(
       auto array_copy_semantics,
       FromArrayCopySemanticsProto(assemble_request.copy_semantics()));
@@ -732,12 +732,25 @@ IfrtBackend::HandleAssembleArrayFromSingleDeviceArraysRequest(
                         FromSingleDeviceShardSemanticsProto(
                             assemble_request.single_device_shard_semantics()));
   }
-
-  TF_ASSIGN_OR_RETURN(
-      auto array,
-      client_->AssembleArrayFromSingleDeviceArrays(
-          std::move(shape), std::move(sharding), absl::MakeSpan(arrays),
-          array_copy_semantics, single_device_shard_semantics));
+  tsl::RCReference<xla::ifrt::Array> array;
+  if (version_.protocol_version() <
+      protocol_version::kAssembleArrayFromSingleDeviceArraysWithDType) {
+    if (arrays.empty()) {
+      return absl::InvalidArgumentError(
+          "AssembleArrayFromSingleDeviceArrays requires at least one array.");
+    }
+    TF_ASSIGN_OR_RETURN(array, client_->AssembleArrayFromSingleDeviceArrays(
+                                   std::move(shape), std::move(sharding),
+                                   absl::MakeSpan(arrays), array_copy_semantics,
+                                   single_device_shard_semantics));
+  } else {
+    TF_ASSIGN_OR_RETURN(DType dtype,
+                        DType::FromProto(assemble_request.dtype()));
+    TF_ASSIGN_OR_RETURN(array, client_->AssembleArrayFromSingleDeviceArrays(
+                                   dtype, std::move(shape), std::move(sharding),
+                                   absl::MakeSpan(arrays), array_copy_semantics,
+                                   single_device_shard_semantics));
+  }
 
   auto ifrt_resp = NewIfrtResponse(request->request_metadata().op_id());
 
@@ -765,11 +778,8 @@ IfrtBackend::HandleRemapArraysRequest(std::unique_ptr<IfrtRequest> request) {
     }
   }
 
-  TF_ASSIGN_OR_RETURN(
-      RemapPlan plan,
-      RemapPlan::FromProto(
-          absl::bind_front(&Client::LookupDevice, client_.get()),
-          remap_request.plan()));
+  TF_ASSIGN_OR_RETURN(RemapPlan plan, RemapPlan::FromProto(
+                                          client_.get(), remap_request.plan()));
   TF_ASSIGN_OR_RETURN(auto semantics, FromArrayCopySemanticsProto(
                                           remap_request.copy_semantics()));
 
@@ -1151,8 +1161,8 @@ Future<BackendInterface::Response> IfrtBackend::HandleCompileRequest(
     const CompileRequest& compile_request = request->compile_request();
 
     auto deserialize_program_options =
-        std::make_unique<DeserializeProgramOptions>(
-            absl::bind_front(&Client::LookupDevice, client_.get()));
+        std::make_unique<DeserializeProgramOptions>(client_.get());
+
     TF_ASSIGN_OR_RETURN(
         auto program,
         Deserialize<xla::ifrt::Program>(

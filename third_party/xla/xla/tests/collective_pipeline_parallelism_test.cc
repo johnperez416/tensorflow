@@ -43,10 +43,12 @@ namespace {
 // within Google, see go/multi-gpu-unit-test.
 class CollectivePipelineParallelismTest
     : public HloTestBase,
-      public ::testing::WithParamInterface<bool> {
+      public ::testing::WithParamInterface<
+          DebugOptions::PipelineParallelismOptLevel> {
  public:
   CollectivePipelineParallelismTest() {
     VLOG(1) << "Running with " << num_devices() << " devices";
+    xla_gpu_experimental_pipeline_parallelism_opt_level_ = GetParam();
   }
 
   HloModuleConfig GetModuleConfigForTest(int64_t replica_count = 1,
@@ -56,12 +58,15 @@ class CollectivePipelineParallelismTest
 
     // Set debug options.
     DebugOptions debug_options = GetDebugOptionsForTest();
-    debug_options.set_xla_gpu_enable_experimental_pipeline_parallelism_opt(
-        GetParam());
+    debug_options.set_xla_gpu_experimental_pipeline_parallelism_opt_level(
+        xla_gpu_experimental_pipeline_parallelism_opt_level_);
     config.set_debug_options(debug_options);
 
     return config;
   }
+
+  DebugOptions::PipelineParallelismOptLevel
+      xla_gpu_experimental_pipeline_parallelism_opt_level_;
 };
 
 XLA_TEST_P(CollectivePipelineParallelismTest,
@@ -103,7 +108,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
 
   const int64_t kNumReplicas = 4;
   const int64_t kNumPartitions = 1;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -296,7 +304,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest, NaiveBFSMicrobatch4Replica4) {
 
   const int64_t kNumReplicas = 4;
   const int64_t kNumPartitions = 1;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -416,7 +427,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest, NaiveBFSMicrobatch5Replica4) {
 
   const int64_t kNumReplicas = 4;
   const int64_t kNumPartitions = 1;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -536,7 +550,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
 
   const int64_t kNumReplicas = 4;
   const int64_t kNumPartitions = 1;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -674,7 +691,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
 
   const int64_t kNumReplicas = 4;
   const int64_t kNumPartitions = 1;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -814,7 +834,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
 
   const int64_t kNumReplicas = 4;
   const int64_t kNumPartitions = 1;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -907,7 +930,11 @@ XLA_TEST_P(CollectivePipelineParallelismTest, SendRecvLoop) {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+  if (test_runner().device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << test_runner().device_count()
+                 << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -992,7 +1019,11 @@ XLA_TEST_P(CollectivePipelineParallelismTest, SendRecvLoop2Devices) {
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 2;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+  if (test_runner().device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << test_runner().device_count()
+                 << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -1088,7 +1119,11 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 4;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+  if (test_runner().device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << test_runner().device_count()
+                 << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -1186,7 +1221,11 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
 
   const int64_t kNumReplicas = 1;
   const int64_t kNumPartitions = 2;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas * kNumPartitions);
+  if (test_runner().device_count() < kNumReplicas * kNumPartitions) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas * kNumPartitions
+                 << " devices (" << test_runner().device_count()
+                 << " available)";
+  }
 
   // Parse HLO module.
   HloModuleConfig config = GetModuleConfigForTest(
@@ -1278,6 +1317,7 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
     after_all_fwd = token[] after-all()
     fwd_send = (f32[16], u32[], token[]) send(next_stage_slice, after_all_fwd),
       frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
+    fwd_send_done = token[] send-done(fwd_send)
 
     // Select compute argument from previous stage or from input and perform
     // compute.
@@ -1298,28 +1338,29 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
     buffer_ = f32[5,16] call(buffer, prev_iteration_compute_res, c4, i),
         to_apply=update_buffer_mb5
 
-    fwd_recv = (f32[16], u32[], token[]) recv(after_all_fwd),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
-    fwd_recv_done = (f32[16], token[]) recv-done(fwd_recv),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}},
-      control-predecessors={fwd_send}
 
     after_all_bwd = token[] after-all()
-    bwd_send = (f32[16], u32[], token[]) send(next_stage_slice, after_all_bwd),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
     bwd_recv = (f32[16], u32[], token[]) recv(after_all_bwd),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
-    bwd_recv_done = (f32[16], token[]) recv-done(bwd_recv),
       frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}},
-      control-predecessors={bwd_send}
+      control-predecessors={fwd_send_done, fwd_send}
+    bwd_recv_done = (f32[16], token[]) recv-done(bwd_recv),
+      frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+    bwd_send = (f32[16], u32[], token[]) send(next_stage_slice, after_all_bwd),
+      frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}},
+      control-predecessors={bwd_recv_done, bwd_recv}
+    bwd_send_done = token[] send-done(bwd_send)
+
+    fwd_recv = (f32[16], u32[], token[]) recv(after_all_fwd),
+      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}},
+      control-predecessors={bwd_send_done, bwd_send}
+    fwd_recv_done = (f32[16], token[]) recv-done(fwd_recv),
+      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
 
     i_ = add(i, c1)
 
     ROOT tuple_ = (f32[16,16], f32[5,16], f32[5,16], f32[5,16], f32[16], u32[],
       (f32[16], token[]), (f32[16], token[])) tuple(weights, input, output_,
       buffer_, compute_res, i_, fwd_recv_done, bwd_recv_done)
-    fwd_send_done = token[] send-done(fwd_send)
-    bwd_send_done = token[] send-done(bwd_send)
   }
 
   ENTRY main {
@@ -1333,21 +1374,22 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
     c0 = u32[] constant(0)
     input_slice = f32[16] call(input, c0, c0), to_apply=read_buffer_mb5
 
-    after_all_fwd = token[] after-all()
-    fwd_recv = (f32[16], u32[], token[]) recv(after_all_fwd),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
-    fwd_recv_done = (f32[16], token[]) recv-done(fwd_recv),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
 
     after_all_bwd = token[] after-all()
     bwd_recv = (f32[16], u32[], token[]) recv(after_all_bwd),
       frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
-    bwd_recv_done = (f32[16], token[]) recv-done(bwd_recv),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+    bwd_recv_done = (f32[16], token[]) recv-done(bwd_recv)
     bwd_send = (f32[16], u32[], token[]) send(input_slice, after_all_bwd),
-      frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}}
+      frontend_attributes={_xla_send_recv_source_target_pairs={{3,0}}},
+      control-predecessors={bwd_recv_done, bwd_recv}
     bwd_send_done = token[] send-done(bwd_send)
 
+    after_all_fwd = token[] after-all()
+    fwd_recv = (f32[16], u32[], token[]) recv(after_all_fwd),
+      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}},
+      control-predecessors={bwd_send_done, bwd_send}
+    fwd_recv_done = (f32[16], token[]) recv-done(fwd_recv),
+      frontend_attributes={_xla_send_recv_source_target_pairs={{0,1},{1,2},{2,3}}}
 
     // Iterate through pipeline stages.
     tuple = (f32[16,16], f32[5,16], f32[5,16], f32[5,16], f32[16], u32[],
@@ -1413,7 +1455,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
   )";
 
   const int64_t kNumReplicas = 4;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -1597,7 +1642,10 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
   )";
 
   const int64_t kNumReplicas = 4;
-  SKIP_TEST_IF_NUM_DEVICES_LESS_THAN(kNumReplicas)
+  if (test_runner().device_count() < kNumReplicas) {
+    GTEST_SKIP() << "Test requires at least " << kNumReplicas << " devices ("
+                 << test_runner().device_count() << " available)";
+  }
 
   HloModuleConfig config =
       GetModuleConfigForTest(/*replica_count=*/kNumReplicas);
@@ -1635,9 +1683,14 @@ XLA_TEST_P(CollectivePipelineParallelismTest,
       ErrorSpec{/*abs_error=*/1e-5, /*rel_error=*/1e-5}));
 }
 
-INSTANTIATE_TEST_SUITE_P(CollectivePipelineParallelismTestWithAndWithoutOpts,
-                         CollectivePipelineParallelismTest, ::testing::Bool(),
-                         ::testing::PrintToStringParamName());
+INSTANTIATE_TEST_SUITE_P(
+    CollectivePipelineParallelismTestWithAndWithoutOpts,
+    CollectivePipelineParallelismTest,
+    ::testing::ValuesIn(
+        {DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE,
+         DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE,
+         DebugOptions::PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE_CYCLE_DECOMPOSER}),
+    ::testing::PrintToStringParamName());
 
 }  // namespace
 }  // namespace xla

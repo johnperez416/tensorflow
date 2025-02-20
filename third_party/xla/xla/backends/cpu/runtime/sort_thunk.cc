@@ -56,6 +56,7 @@ limitations under the License.
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "xla/xla_data.pb.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -540,6 +541,7 @@ class SortIterator {
   SortIterator& operator=(SortIterator&& other) = default;
 
   reference operator*() const { return *ptr_; }
+  reference operator[](difference_type diff) const { return *(*this + diff); }
 
   difference_type operator-(const SortIterator& rhs) const {
     return (ptr_ - rhs.ptr_) / stride_;

@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "absl/types/span.h"
 #include "tensorflow/lite/experimental/litert/c/litert_layout.h"
 #include "tensorflow/lite/experimental/litert/c/litert_model.h"
+#include "tensorflow/lite/experimental/litert/c/litert_op_code.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_buffer_ref.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_expected.h"
 #include "tensorflow/lite/experimental/litert/core/util/flatbuffer_tools.h"
@@ -35,6 +37,16 @@ using ::litert::internal::TflBufferPtr;
 using ::litert::internal::TflOpCode;
 using ::litert::internal::TflOpCodePtr;
 using ::litert::internal::TflOptions;
+
+std::optional<std::string> GetCustomOpCode(const LiteRtModelT& model,
+                                           const LiteRtOpT& op) {
+  if (op.OpCode() != kLiteRtOpCodeTflCustom) {
+    return {};
+  }
+  const auto& tfl_op_codes = detail::GetTflOpCodes(model);
+  const auto tfl_op_code_ind = detail::GetTflOpCodeInd(op);
+  return tfl_op_codes[tfl_op_code_ind]->custom_code;
+}
 
 TensorType MakeRankedTensorType(LiteRtElementType element_type,
                                 absl::Span<const int32_t> dims) {
@@ -103,18 +115,6 @@ TflOptions&& TakeTflOptions(LiteRtOpT& litert_op) {
   return std::move(litert_op.tfl_option_);
 }
 
-const TflBuffer& GetTflBuffer(const LiteRtWeightsT& litert_weights) {
-  return *litert_weights.tfl_buf_;
-}
-
-TflBufferPtr TakeTflBuffer(LiteRtWeightsT& litert_weights) {
-  return std::move(litert_weights.tfl_buf_);
-}
-
-void SetTflBuffer(LiteRtWeightsT& litert_weights, TflBufferPtr tfl_buffer) {
-  litert_weights.tfl_buf_ = std::move(tfl_buffer);
-}
-
 const std::vector<TflOpCodePtr>& GetTflOpCodes(
     const LiteRtModelT& litert_model) {
   return litert_model.tfl_operator_codes_;
@@ -124,13 +124,16 @@ std::vector<TflOpCodePtr>&& TakeTflOpCodes(LiteRtModelT& litert_model) {
   return std::move(litert_model.tfl_operator_codes_);
 }
 
-void SetTflInitFlatbuffer(LiteRtModelT& litert_model,
-                          BufferRef<uint8_t> init_flatbuffer) {
-  litert_model.tfl_init_flatbuffer_ = init_flatbuffer;
+// new stuff start
+void SetTflFlatbuffer(LiteRtModelT& litert_model,
+                      LiteRtModelT::TflFlatbuffer&& tfl_flatbuffer) {
+  litert_model.tfl_flatbuffer_ = std::move(tfl_flatbuffer);
 }
 
-BufferRef<uint8_t> GetTflInitFlatbuffer(const LiteRtModelT& litert_model) {
-  return litert_model.tfl_init_flatbuffer_;
+const LiteRtModelT::TflFlatbuffer& GetTflFlatbuffer(
+    const LiteRtModelT& litert_model) {
+  return litert_model.tfl_flatbuffer_;
 }
+// new stuff end
 
 }  // namespace detail

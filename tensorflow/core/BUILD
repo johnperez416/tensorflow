@@ -1030,6 +1030,7 @@ cc_library(
     deps = [
         "//tensorflow/core:mobile_additional_lib_deps",
         "//tensorflow/core/platform:resource",
+        "//tensorflow/core/public:release_version",
         "//tensorflow/core/util:stats_calculator_portable",
     ] + tf_portable_proto_lib() + tf_portable_deps_no_runtime(),
     alwayslink = 1,
@@ -1274,8 +1275,9 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
-        "@ml_dtypes//:float8",
-        "@ml_dtypes//:intn",
+        "@ml_dtypes_py//ml_dtypes:float8",
+        "@ml_dtypes_py//ml_dtypes:intn",
+        "@ml_dtypes_py//ml_dtypes:mxfloat",
     ] + if_static([":lib_internal_impl"]),
 )
 
@@ -1302,8 +1304,9 @@ cc_library(
         "@com_google_absl//absl/meta:type_traits",
         "@com_google_absl//absl/strings",
         "@eigen_archive//:eigen3",
-        "@ml_dtypes//:float8",
-        "@ml_dtypes//:intn",
+        "@ml_dtypes_py//ml_dtypes:float8",
+        "@ml_dtypes_py//ml_dtypes:intn",
+        "@ml_dtypes_py//ml_dtypes:mxfloat",
     ],
 )
 
@@ -1450,8 +1453,9 @@ cc_library(
         "@com_google_protobuf//:protobuf",
         "@eigen_archive//:eigen3",
         "@local_xla//xla/tsl/lib/math:math_util",
-        "@ml_dtypes//:float8",
-        "@ml_dtypes//:intn",
+        "@ml_dtypes_py//ml_dtypes:float8",
+        "@ml_dtypes_py//ml_dtypes:intn",
+        "@ml_dtypes_py//ml_dtypes:mxfloat",
         "@snappy",
         "@zlib",
     ] + select({
@@ -1486,6 +1490,7 @@ cc_library(
         "@local_xla//xla/service/gpu:backend_configs_cc_impl",
         "@local_xla//xla/service/gpu/model:hlo_op_profile_proto_cc_impl",
         "@local_xla//xla/stream_executor:device_description_proto_cc_impl",
+        "@local_xla//xla/stream_executor/cuda:cuda_compute_capability_proto_cc_impl",
         "//tensorflow/lite/toco:toco_flags_proto_cc_impl",
         "//tensorflow/lite/toco:model_flags_proto_cc_impl",
         "//tensorflow/lite/toco:types_proto_cc_impl",
@@ -1702,6 +1707,7 @@ tf_cuda_library(
         "//tensorflow/core/profiler/lib:annotated_traceme",
         "//tensorflow/core/profiler/lib:scoped_memory_debug_annotation",
         "//tensorflow/core/profiler/lib:traceme",
+        "//tensorflow/core/public:release_version",
         "//tensorflow/core/util:determinism",
         "//tensorflow/core/util:einsum_op_util",
         "//tensorflow/core/util:managed_stack_trace",
@@ -1748,7 +1754,7 @@ custom_op_cc_header_only_library(
     ],
 )
 
-cc_header_only_library(
+custom_op_cc_header_only_library(
     name = "stream_executor_headers_lib",
     # Fully depend on external repositories, because identifying the headers
     # is fragile.
@@ -1782,6 +1788,7 @@ tf_cuda_library(
     name = "graph",
     srcs = ["//tensorflow/core/graph:graph_srcs"],
     hdrs = ["//tensorflow/core/graph:graph_headers"],
+    visibility = ["//visibility:public"],
     deps = [
         ":framework",
         ":framework_internal",
@@ -1828,6 +1835,7 @@ alias(
     name = "core_cpu_lib",
     actual =
         "//tensorflow/core/common_runtime:core_cpu_lib",
+    visibility = ["//visibility:public"],
 )
 
 alias(
@@ -1874,7 +1882,7 @@ cc_library(
 # Main program for tests
 alias(
     name = "test_main",
-    actual = "@local_tsl//tsl/platform:test_main",
+    actual = "@local_xla//xla/tsl/platform:test_main",
     visibility = ["//tensorflow:internal"],
 )
 

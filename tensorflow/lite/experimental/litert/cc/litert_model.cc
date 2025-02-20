@@ -16,14 +16,22 @@
 
 #include <vector>
 
+#include "absl/strings/string_view.h"
+#include "tensorflow/lite/experimental/litert/c/litert_common.h"
 #include "tensorflow/lite/experimental/litert/c/litert_model.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_detail.h"
+#include "tensorflow/lite/experimental/litert/cc/litert_expected.h"
 
 namespace litert {
 
 bool Tensor::IsSubgraphOutput() const { return Uses().empty(); }
 
 bool Tensor::IsSubgraphInput() const {
+  // A special case for zero-sized tensors.
+  if (RankedTensorType()->Layout().Rank() == 1 &&
+      RankedTensorType()->Layout().Dimensions()[0] == 0) {
+    return false;
+  }
   return !HasWeights() && !DefiningOp().has_value();
 }
 
@@ -41,7 +49,7 @@ Tensor::TensorUses Tensor::Uses() const {
     LiteRtParamIndex user_arg_index;
     litert::internal::AssertOk(LiteRtGetTensorUse, Get(), i, &user,
                                &user_arg_index);
-    uses.emplace_back(Op(user), user_arg_index);
+    uses.emplace_back(TensorUse{Op(user), user_arg_index});
   }
   return uses;
 }
@@ -83,6 +91,38 @@ SubgraphInputs Subgraph::Inputs() const {
     inputs.emplace_back(Tensor(input));
   }
   return inputs;
+}
+
+Expected<Tensor> Subgraph::Input(absl::string_view name) const {
+  LiteRtParamIndex num_inputs;
+  internal::AssertOk(LiteRtGetNumSubgraphInputs, Get(), &num_inputs);
+
+  for (auto i = 0; i < num_inputs; ++i) {
+    LiteRtTensor input;
+    internal::AssertOk(LiteRtGetSubgraphInput, Get(), i, &input);
+    const char* input_name;
+    internal::AssertOk(LiteRtGetTensorName, input, &input_name);
+    if (name == input_name) {
+      return Tensor(input);
+    }
+  }
+  return Unexpected(kLiteRtStatusErrorNotFound, "Failed to find input");
+}
+
+Expected<Tensor> Subgraph::Output(absl::string_view name) const {
+  LiteRtParamIndex num_outputs;
+  internal::AssertOk(LiteRtGetNumSubgraphOutputs, Get(), &num_outputs);
+
+  for (auto i = 0; i < num_outputs; ++i) {
+    LiteRtTensor output;
+    internal::AssertOk(LiteRtGetSubgraphOutput, Get(), i, &output);
+    const char* output_name;
+    internal::AssertOk(LiteRtGetTensorName, output, &output_name);
+    if (name == output_name) {
+      return Tensor(output);
+    }
+  }
+  return Unexpected(kLiteRtStatusErrorNotFound, "Failed to find output");
 }
 
 SubgraphOutputs Subgraph::Outputs() const {

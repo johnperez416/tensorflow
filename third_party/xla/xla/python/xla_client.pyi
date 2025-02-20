@@ -62,8 +62,10 @@ mlir_api_version: int
 
 bfloat16: type[numpy.generic]
 # TODO: Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
+# float4_e2m1fn: type[numpy.generic]
 # float8_e3m4: type[numpy.generic]
 # float8_e4m3: type[numpy.generic]
+# float8_e8m0fnu: type[numpy.generic]
 float8_e4m3fn: type[numpy.generic]
 float8_e4m3b11fnuz: type[numpy.generic]
 float8_e4m3fnuz: type[numpy.generic]
@@ -267,6 +269,12 @@ def batched_device_put(
     host_buffer_semantics: Any = ...,
 ) -> ArrayImpl: ...
 
+def reorder_shards(
+    x: ArrayImpl,
+    dst_sharding: Any,
+    array_copy_semantics: ArrayCopySemantics,
+) -> ArrayImpl: ...
+
 def batched_block_until_ready(x: Sequence[ArrayImpl]) -> None: ...
 
 def check_and_canonicalize_memory_kind(
@@ -309,3 +317,6 @@ def register_custom_type_id_handler(platform: str, handler: Any) -> None: ...
 def encode_inspect_sharding_callback(handler: Any) -> bytes: ...
 
 register_custom_call_partitioner = _xla.register_custom_call_partitioner
+register_custom_call_as_batch_partitionable = (
+    _xla.register_custom_call_as_batch_partitionable
+)

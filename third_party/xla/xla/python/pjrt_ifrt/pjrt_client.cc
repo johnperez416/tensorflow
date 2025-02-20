@@ -57,6 +57,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/attribute_map.h"
+#include "xla/python/ifrt/basic_device_list.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
@@ -81,12 +82,12 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/status_macros.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/logging.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/casts.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/logging.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace ifrt {
@@ -545,9 +546,12 @@ absl::StatusOr<tsl::RCReference<Array>> MakeStringArrayFromHostBuffer(
           "byte_strides is not currently supported for making "
           "BasicStringArrays.");
     }
-    if (semantics != Client::HostBufferSemantics::kImmutableOnlyDuringCall) {
+    if (!(semantics == Client::HostBufferSemantics::kImmutableOnlyDuringCall ||
+          semantics ==
+              Client::HostBufferSemantics::kImmutableUntilTransferCompletes)) {
       return absl::InvalidArgumentError(
-          "HostBufferSemantics other than kImmutableOnlyDuringCall are not "
+          "HostBufferSemantics other than kImmutableOnlyDuringCall and "
+          "kImmutableUntilTransferCompletes are not "
           "currently supported for making BasicStringArrays.");
     }
     if (!llvm::isa<const SingleDeviceSharding>(sharding.get())) {
@@ -671,11 +675,14 @@ AssembleStringArrayFromSingleDeviceStringArrays(
       return absl::InvalidArgumentError(
           "All single device arrays must be BasicStringArrays");
     }
-    if (!llvm::isa<SingleDeviceSharding>(basic_string_array->sharding())) {
-      return absl::InvalidArgumentError(absl::StrFormat(
-          "All single device arrays must have single device sharding. got: %s "
-          "for shard index: %d",
-          basic_string_array->sharding().DebugString(), i));
+
+    if (!llvm::isa<SingleDeviceSharding>(basic_string_array->sharding()) &&
+        (basic_string_array->sharding().devices()->size() != 1)) {
+      return absl::InvalidArgumentError(
+          absl::StrFormat("All single device arrays must have single device "
+                          "sharding. got: %s "
+                          "for shard index: %d",
+                          basic_string_array->sharding().DebugString(), i));
     }
 
     basic_string_array->buffers().OnReady(
@@ -855,6 +862,11 @@ absl::StatusOr<Device*> PjRtClient::LookupAddressableDevice(
   return LookupPjRtDevice(pjrt_device);
 }
 
+tsl::RCReference<DeviceList> PjRtClient::MakeDeviceList(
+    absl::Span<Device* const> devices) const {
+  return xla::ifrt::BasicDeviceList::Create(devices);
+}
+
 const AttributeMap& PjRtClient::Attributes() const { return attributes_; }
 
 absl::StatusOr<tsl::RCReference<PjRtCompatibleArray>>
@@ -944,12 +956,15 @@ absl::StatusOr<tsl::RCReference<Array>> PjRtClient::MakeArrayFromHostBuffer(
         return InvalidArgument("Cannot copy array to non-addressable device %s",
                                device->DebugString());
       }
-      TF_ASSIGN_OR_RETURN(
-          buffer,
-          pjrt_client_->BufferFromHostBuffer(
-              data, primitive_type, shape.dims(), byte_strides, semantics,
-              on_done_with_host_buffer_per_device,
-              tensorflow::down_cast<PjRtDevice*>(device)->pjrt_device()));
+      TF_ASSIGN_OR_RETURN(xla::PjRtMemorySpace * memory_space,
+                          tensorflow::down_cast<PjRtDevice*>(device)
+                              ->pjrt_device()
+                              ->default_memory_space());
+      TF_ASSIGN_OR_RETURN(buffer,
+                          pjrt_client_->BufferFromHostBuffer(
+                              data, primitive_type, shape.dims(), byte_strides,
+                              semantics, on_done_with_host_buffer_per_device,
+                              memory_space, /*device_layout=*/nullptr));
     }
     buffers.push_back(std::move(buffer));
   }
@@ -964,12 +979,26 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
   DCHECK(this);
   return AssembleArrayFromSingleDeviceArrays(
       std::move(shape), std::move(sharding), arrays, semantics,
-      SingleDeviceShardSemantics::kAllShards);
+      SingleDeviceShardSemantics::kAddressableShards);
 }
 
 absl::StatusOr<tsl::RCReference<Array>>
 PjRtClient::AssembleArrayFromSingleDeviceArrays(
     Shape shape, std::shared_ptr<const Sharding> sharding,
+    absl::Span<tsl::RCReference<Array>> arrays,
+    ArrayCopySemantics array_copy_semantics,
+    SingleDeviceShardSemantics single_device_shard_semantics) {
+  DCHECK(this);
+  DCHECK(!arrays.empty());
+  DType dtype = arrays[0]->dtype();
+  return AssembleArrayFromSingleDeviceArrays(
+      dtype, std::move(shape), std::move(sharding), arrays,
+      array_copy_semantics, single_device_shard_semantics);
+}
+
+absl::StatusOr<tsl::RCReference<Array>>
+PjRtClient::AssembleArrayFromSingleDeviceArrays(
+    DType dtype, Shape shape, std::shared_ptr<const Sharding> sharding,
     absl::Span<tsl::RCReference<Array>> arrays,
     ArrayCopySemantics array_copy_semantics,
     SingleDeviceShardSemantics single_device_shard_semantics) {
@@ -1005,14 +1034,13 @@ PjRtClient::AssembleArrayFromSingleDeviceArrays(
         "single-shard arrays: %d vs. %d",
         sharding->devices()->AddressableDeviceList()->size(), arrays.size());
   }
-  if (arrays[0]->dtype().kind() == DType::kString) {
+  if (dtype.kind() == DType::kString) {
     return AssembleStringArrayFromSingleDeviceStringArrays(
         shape, sharding, arrays, array_copy_semantics,
         single_device_shard_semantics);
   }
   PjRtArray::PjRtBuffers buffers;
   buffers.reserve(arrays.size());
-  DType dtype = arrays[0]->dtype();
   for (int i = 0; i < arrays.size(); ++i) {
     if (!llvm::isa<PjRtCompatibleArray>(arrays[i].get())) {
       return InvalidArgument(

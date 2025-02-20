@@ -20,6 +20,7 @@
 #include <utility>
 
 #include "absl/types/span.h"
+#include <CL/cl.h>
 #include "tensorflow/lite/experimental/litert/c/litert_common.h"
 #include "tensorflow/lite/experimental/litert/c/litert_event.h"
 #include "tensorflow/lite/experimental/litert/c/litert_model.h"
@@ -136,6 +137,43 @@ class TensorBuffer
 #endif
   }
 
+  struct DmaBuf {
+    void* addr;
+    int fd;
+  };
+
+  litert::Expected<DmaBuf> GetDmaBuf() const {
+#if LITERT_HAS_DMABUF_SUPPORT
+    DmaBuf dma_buf;
+    if (LiteRtGetTensorBufferDmaBufBuffer(Get(), &dma_buf.addr, &dma_buf.fd) ==
+        kLiteRtStatusOk) {
+      return dma_buf;
+    } else {
+      return litert::Unexpected(kLiteRtStatusErrorRuntimeFailure,
+                                "Failed to get DMA-BUF from tensor buffer");
+    }
+#else
+    return litert::Unexpected(kLiteRtStatusErrorRuntimeFailure,
+                              "DMA-BUF is not supported on this platform");
+#endif
+  }
+
+  Expected<cl_mem> GetOpenClBuffer() const {
+#if LITERT_HAS_OPENCL_SUPPORT
+    cl_mem cl_mem;
+    if (LiteRtGetTensorBufferOpenClBuffer(Get(), &cl_mem) == kLiteRtStatusOk) {
+      return cl_mem;
+    } else {
+      return litert::Unexpected(
+          kLiteRtStatusErrorRuntimeFailure,
+          "Failed to get OpenCL buffer from tensor buffer");
+    }
+#else
+    return litert::Unexpected(kLiteRtStatusErrorRuntimeFailure,
+                              "OpenCL is not supported on this platform");
+#endif
+  }
+
   Expected<LiteRtTensorBufferType> BufferType() const {
     LiteRtTensorBufferType tensor_buffer_type;
     if (auto status = LiteRtGetTensorBufferType(Get(), &tensor_buffer_type);
@@ -187,8 +225,13 @@ class TensorBuffer
     return Event(event, /*owned=*/false);
   }
 
-  Expected<void> SetEvent(Event e) {
-    if (auto status = LiteRtSetTensorBufferEvent(Get(), e.Get());
+  // The function takes ownership of the passed event e.
+  Expected<void> SetEvent(Event&& e) {
+    if (!e.IsOwned()) {
+      return Error(kLiteRtStatusErrorInvalidArgument,
+                   "Expected an owned event");
+    }
+    if (auto status = LiteRtSetTensorBufferEvent(Get(), e.Release());
         status != kLiteRtStatusOk) {
       return Error(status, "Failed to set tensor buffer event");
     }
@@ -203,9 +246,9 @@ class TensorBuffer
     return {};
   }
 
-  Expected<void*> Lock(LiteRtEvent event = nullptr) {
+  Expected<void*> Lock() {
     void* host_mem_addr;
-    if (auto status = LiteRtLockTensorBuffer(Get(), &host_mem_addr, event);
+    if (auto status = LiteRtLockTensorBuffer(Get(), &host_mem_addr);
         status != kLiteRtStatusOk) {
       return Unexpected(status, "Failed to lock the tensor buffer");
     }
@@ -280,16 +323,15 @@ class TensorBufferScopedLock {
 
   template <typename T = void>
   static Expected<std::pair<TensorBufferScopedLock, T*>> Create(
-      TensorBuffer& tensor_buffer, LiteRtEvent event = nullptr) {
-    return Create<T>(tensor_buffer.Get(), event);
+      TensorBuffer& tensor_buffer) {
+    return Create<T>(tensor_buffer.Get());
   }
 
   template <typename T = void>
   static Expected<std::pair<TensorBufferScopedLock, T*>> Create(
-      LiteRtTensorBuffer tensor_buffer, LiteRtEvent event = nullptr) {
+      LiteRtTensorBuffer tensor_buffer) {
     void* host_mem_addr;
-    if (auto status =
-            LiteRtLockTensorBuffer(tensor_buffer, &host_mem_addr, event);
+    if (auto status = LiteRtLockTensorBuffer(tensor_buffer, &host_mem_addr);
         status != kLiteRtStatusOk) {
       return Unexpected(status, "Failed to lock the tensor buffer");
     }

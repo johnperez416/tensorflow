@@ -39,6 +39,10 @@ limitations under the License.
 #include "xla/stream_executor/stream.h"
 #include "xla/stream_executor/stream_executor.h"
 
+#if CUDA_VERSION < 12030
+typedef cuuint64_t CUgraphConditionalHandle;
+#endif
+
 namespace stream_executor::gpu {
 
 // This class implements GpuCommandBuffer for Nvidia GPUs.
@@ -75,7 +79,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
       DeviceMemory<bool> predicate) override;
   absl::Status LaunchSetCaseConditionKernel(
       ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-      DeviceMemory<int32_t> index, int32_t batch_offset,
+      DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
       bool enable_conditional_default) override;
   absl::Status LaunchSetForConditionKernel(ExecutionScopeId execution_scope_id,
                                            GraphConditionalHandle conditional,
@@ -167,7 +171,7 @@ class CudaCommandBuffer final : public GpuCommandBuffer {
                   CUgraphConditionalHandle, CUgraphConditionalHandle,
                   CUgraphConditionalHandle, CUgraphConditionalHandle,
                   CUgraphConditionalHandle, CUgraphConditionalHandle,
-                  DeviceMemory<int32_t>, int32_t, int32_t, bool>;
+                  DeviceMemory<uint8_t>, bool, int32_t, int32_t, bool>;
 
   using SetForConditionKernel =
       TypedKernel<CUgraphConditionalHandle, DeviceMemory<int32_t>, int32_t>;

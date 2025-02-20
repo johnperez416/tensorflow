@@ -14,8 +14,10 @@ limitations under the License.
 ==============================================================================*/
 
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -46,6 +48,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/translate/mlir_roundtrip_flags.h"
+#include "tensorflow/compiler/mlir/tensorflow/translate/tools/parsers.h"
 
 using llvm::cl::opt;
 

@@ -15,15 +15,14 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/str_format.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/CommandLine.h"
-#include "tensorflow/lite/experimental/litert/core/byte_code_util.h"
 #include "tensorflow/lite/experimental/litert/tools/apply_plugin.h"
 #include "tensorflow/lite/experimental/litert/tools/outstream.h"
 
-using ::litert::internal::Serialization;
 using ::litert::tools::ApplyPlugin;
 using ::litert::tools::ApplyPluginRun;
 using ::litert::tools::UserStream;
@@ -63,11 +62,11 @@ static llvm::cl::list<std::string> libs(
         "compiler"}));
 
 // NOLINTNEXTLINE
-static llvm::cl::opt<std::string> out(
+static llvm::cl::list<std::string> outs(
     "o",
-    llvm::cl::desc("Path to file for output, \"-\" indicates standard out, "
+    llvm::cl::desc("Path to files for output, \"-\" indicates standard out, "
                    "\"--\" for standard err, \"none\" for null stream."),
-    llvm::cl::init("-"));
+    llvm::cl::list_init(llvm::ArrayRef<std::string>{"-"}));
 
 // NOLINTNEXTLINE
 static llvm::cl::opt<std::string> err(
@@ -75,11 +74,6 @@ static llvm::cl::opt<std::string> err(
     llvm::cl::desc("Path to file for err output, \"-\" indicates standard out, "
                    "\"--\" for standard err, \"none\" for null stream."),
     llvm::cl::init("--"));
-
-// NOLINTNEXTLINE
-static llvm::cl::opt<std::string> serialization(
-    "serialization", llvm::cl::desc("Serialization strategy to use."),
-    llvm::cl::init("METADATA"));
 
 ApplyPluginRun::Ptr ParseFlags() {
   auto res = std::make_unique<ApplyPluginRun>();
@@ -107,14 +101,6 @@ ApplyPluginRun::Ptr ParseFlags() {
     return nullptr;
   }
 
-  if (serialization == "METADATA") {
-    res->serialization = Serialization::kMetadata;
-  } else if (serialization == "APPEND") {
-    res->serialization = Serialization::kAppend;
-  } else {
-    res->serialization = Serialization::kUnknown;
-  }
-
   return res;
 }
 
@@ -126,9 +112,13 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  auto out_stream = UserStream::MakeFromFlag(out);
   run->outs.clear();
-  run->outs.push_back(out_stream.Get());
+  std::vector<std::unique_ptr<litert::tools::UserStream>> oss;
+  for (const auto& out : outs) {
+    oss.push_back(std::make_unique<litert::tools::UserStream>(
+        UserStream::MakeFromFlag(out)));
+    run->outs.push_back(oss.back()->Get());
+  }
 
   run->dump_out = UserStream::MakeFromFlag(err);
 

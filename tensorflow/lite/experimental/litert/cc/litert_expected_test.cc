@@ -23,12 +23,14 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/strings/str_cat.h"
 #include "tensorflow/lite/experimental/litert/c/litert_common.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_buffer_ref.h"
 
 namespace litert {
 
 namespace {
+using testing::StrEq;
 
 static constexpr LiteRtStatus kErrorStatus = kLiteRtStatusErrorInvalidArgument;
 
@@ -155,6 +157,13 @@ TEST(UnexpectedTest, WithMessage) {
   EXPECT_EQ(err.Error().Message(), "MESSAGE");
 }
 
+TEST(UnexpectedTest, WithLocalMessageString) {
+  // Message is a string with scoped lifetime.
+  Unexpected err(kErrorStatus, absl::StrCat("MESSAGE", 1));
+  EXPECT_EQ(err.Error().Status(), kErrorStatus);
+  EXPECT_EQ(err.Error().Message(), "MESSAGE1");
+}
+
 Expected<OwningBufferRef<uint8_t>> Go() {
   std::string data = "21234";
   OwningBufferRef<uint8_t> buf(data.c_str());
@@ -166,7 +175,7 @@ Expected<OwningBufferRef<uint8_t>> Forward() {
   if (!thing.HasValue()) {
     return thing.Error();
   }
-  // No copy ellision here.
+  // No copy elision here.
   return thing;
 }
 
@@ -193,6 +202,30 @@ TEST(ExpectedWithNoValue, OStreamOutput) {
   std::ostringstream oss;
   oss << expected.Error();
   EXPECT_THAT(oss.str(), testing::HasSubstr("MESSAGE"));
+}
+
+TEST(ExpectedTest, PrintingWorks) {
+  EXPECT_THAT(absl::StrCat(Expected<int>(3)), StrEq("3"));
+
+  EXPECT_THAT(absl::StrCat(Expected<void>()), StrEq("void expected value"));
+
+  EXPECT_THAT(absl::StrCat(Unexpected(kLiteRtStatusErrorNotFound)),
+              StrEq("kLiteRtStatusErrorNotFound"));
+
+  EXPECT_THAT(absl::StrCat(Unexpected(kLiteRtStatusErrorNotFound,
+                                      "Error not found message")),
+              StrEq("kLiteRtStatusErrorNotFound: Error not found message"));
+
+  EXPECT_THAT(absl::StrCat(Error(kLiteRtStatusErrorNotFound)),
+              StrEq("kLiteRtStatusErrorNotFound"));
+
+  EXPECT_THAT(absl::StrCat(
+                  Error(kLiteRtStatusErrorNotFound, "Error not found message")),
+              StrEq("kLiteRtStatusErrorNotFound: Error not found message"));
+
+  struct UnknownStruct {};
+  EXPECT_THAT(absl::StrCat(Expected<UnknownStruct>({})),
+              StrEq("unformattable expected value"));
 }
 
 }  // namespace

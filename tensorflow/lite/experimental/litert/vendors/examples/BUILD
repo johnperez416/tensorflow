@@ -34,6 +34,7 @@ litert_dynamic_lib(
     visibility = ["//tensorflow/lite/experimental/litert:__subpackages__"],
     deps = [
         "//tensorflow/lite/experimental/litert/c:litert_common",
+        "//tensorflow/lite/experimental/litert/c:litert_logging",
         "//tensorflow/lite/experimental/litert/c:litert_model",
         "//tensorflow/lite/experimental/litert/c:litert_op_code",
         "//tensorflow/lite/experimental/litert/cc:litert_expected",
@@ -51,11 +52,13 @@ cc_test(
     data = ["//tensorflow/lite/experimental/litert/test:mlir_test_data"],
     deps = [
         ":example_plugin",  # buildcleaner: keep
+        "//tensorflow/lite/experimental/litert/c:litert_common",
         "//tensorflow/lite/experimental/litert/c:litert_model",
         "//tensorflow/lite/experimental/litert/c:litert_op_code",
         "//tensorflow/lite/experimental/litert/cc:litert_model",
         "//tensorflow/lite/experimental/litert/core/model",
         "//tensorflow/lite/experimental/litert/test:common",
+        "//tensorflow/lite/experimental/litert/test:matchers",
         "//tensorflow/lite/experimental/litert/vendors/cc:litert_compiler_plugin",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
@@ -78,6 +81,7 @@ cc_library(
         "//tensorflow/lite/experimental/litert/vendors/cc:backend_ir",
         "//tensorflow/lite/experimental/litert/vendors/cc:conversion",
         "//tensorflow/lite/experimental/litert/vendors/cc:ir_types",
+        "@com_google_absl//absl/log:absl_check",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
@@ -93,7 +97,7 @@ cc_test(
         "//tensorflow/lite/experimental/litert/core/model",
         "//tensorflow/lite/experimental/litert/core/model:model_graph",
         "//tensorflow/lite/experimental/litert/core/util:flatbuffer_tools",
-        "//tensorflow/lite/experimental/litert/test:test_macros",
+        "//tensorflow/lite/experimental/litert/test:matchers",
         "//tensorflow/lite/experimental/litert/vendors/cc:conversion",
         "//tensorflow/lite/schema:schema_fbs",
         "@com_google_absl//absl/strings:string_view",
@@ -146,9 +150,10 @@ cc_test(
         "//tensorflow/lite/experimental/litert/cc:litert_model",
         "//tensorflow/lite/experimental/litert/core/model",
         "//tensorflow/lite/experimental/litert/test:common",
-        "//tensorflow/lite/experimental/litert/test:test_macros",
+        "//tensorflow/lite/experimental/litert/test:matchers",
         "//tensorflow/lite/experimental/litert/vendors/c:litert_compiler_plugin",
         "//tensorflow/lite/experimental/litert/vendors/cc:litert_compiler_plugin",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_googletest//:gtest_main",
     ],
 )

@@ -37,22 +37,15 @@
 
 class LiteRtDispatchDelegateOptions {
  public:
-  LiteRtDispatchDelegateOptions() {
-    auto environment = litert::internal::Environment::Instance();
-    if (!environment) {
-      LITERT_LOG(LITERT_WARNING, "LiteRT environment not found");
-      return;
-    }
-
-    auto option =
-        (*environment)->GetOption(kLiteRtEnvOptionTagDispatchLibraryPath);
+  explicit LiteRtDispatchDelegateOptions(LiteRtEnvironmentT& environment) {
+    auto option = environment.GetOption(kLiteRtEnvOptionTagDispatchLibraryDir);
     if (!option.has_value()) {
       return;
     }
 
     if (option->type != kLiteRtAnyTypeString) {
       LITERT_LOG(LITERT_WARNING,
-                 "Ingoring option kLiteRtEnvOptionTagDispatchLibraryPath due "
+                 "Ingoring option kLiteRtEnvOptionTagDispatchLibraryDir due "
                  "to invalid value");
       return;
     }

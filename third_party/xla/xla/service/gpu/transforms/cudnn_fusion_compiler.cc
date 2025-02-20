@@ -176,13 +176,6 @@ inline std::optional<fe::DataType_t> GetComputeDataType(
   return compute_dtype;
 }
 
-int FusionLevel(const HloInstruction& hlo) {
-  return hlo.GetModule()
-      ->config()
-      .debug_options()
-      .xla_gpu_cudnn_gemm_fusion_level();
-};
-
 // Extracts dimensions and strides from HLO tensors in the format expected by
 // cuDNN.
 class GemmDimensionAdapter {
@@ -277,9 +270,6 @@ class GemmDimensionAdapter {
         if (spec->size() == 1) {
           // The dimension is not split, nothing to do.
         } else if (spec->size() == 2) {
-          if (FusionLevel(hlo) < 3) {
-            return std::nullopt;
-          }
           if (!dims.lhs_batch_dimensions().empty()) {
             VLOG(8) << "Noncontracting dimension split is not compatible with "
                        "batch dimensions.";
@@ -498,8 +488,7 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         return std::nullopt;
       }
       continue;
-    } else if (FusionLevel(fusion) >= 2 &&
-               HloPredicateIsOp<HloOpcode::kConstant>(hlo)) {
+    } else if (HloPredicateIsOp<HloOpcode::kConstant>(hlo)) {
       if (const auto const_tensor = HandleConstantHloToCudnnGraph(*hlo, graph);
           const_tensor.has_value()) {
         hlo_to_cudnn[hlo] = const_tensor.value();
@@ -507,10 +496,9 @@ absl::StatusOr<std::optional<se::gpu::CudnnGraph>> HloFusionToCuDnnGraph(
         return std::nullopt;
       }
     } else if (HloPredicateIsOp<HloOpcode::kReshape, HloOpcode::kBitcast,
-                                HloOpcode::kTranspose, HloOpcode::kCopy>(hlo) ||
-               (FusionLevel(fusion) >= 2 &&
-                (HloPredicateIsOp<HloOpcode::kBroadcast, HloOpcode::kSlice>(
-                    hlo)))) {
+                                HloOpcode::kTranspose, HloOpcode::kCopy,
+                                HloOpcode::kBroadcast, HloOpcode::kSlice>(
+                   hlo)) {
       // All these are accounted for separately as transformations of strides.
       hlo_to_cudnn[hlo] = operand(0);
     } else if (hlo->IsElementwise()) {
@@ -654,6 +642,8 @@ absl::StatusOr<HloInstruction*> AddWorkspace(HloInstruction& fusion,
   computation->set_root_instruction(output_tuple, true);
   HloInstruction* new_fusion = fusion.parent()->AddInstruction(
       fusion.CloneWithNewShape(output_tuple->shape()));
+  TF_RETURN_IF_ERROR(new_fusion->CopyAllControlDepsFrom(&fusion));
+  TF_RETURN_IF_ERROR(fusion.DropAllControlDeps());
   TF_RETURN_IF_ERROR(fusion.ReplaceAllUsesWith(fusion.parent()->AddInstruction(
       HloInstruction::CreateGetTupleElement(new_fusion, 0))));
   TF_RETURN_IF_ERROR(fusion.parent()->RemoveInstruction(&fusion));

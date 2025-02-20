@@ -15,13 +15,18 @@ limitations under the License.
 
 #include "xla/hlo/transforms/collectives/collectives_schedule_linearizer.h"
 
+#include <cstdint>
+#include <memory>
+
+#include <gtest/gtest.h>
+#include "absl/algorithm/container.h"
+#include "absl/strings/string_view.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
+#include "xla/hlo/testlib/test_helpers.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/test.h"
-#include "xla/test_helpers.h"
 #include "xla/xla_data.pb.h"
 
 namespace xla {

@@ -42,8 +42,8 @@ limitations under the License.
 #include "xla/python/ifrt/test_util.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/tsl/lib/core/status_test_util.h"
-#include "tsl/platform/statusor.h"
-#include "tsl/platform/test.h"
+#include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/platform/test.h"
 
 namespace xla {
 namespace ifrt {
@@ -179,10 +179,10 @@ TEST(LoadedExecutableImplTest, CompileAndExecutePortable) {
 
   ExecuteOptions execute_options;
   execute_options.fill_status = true;
-  TF_ASSERT_OK_AND_ASSIGN(LoadedExecutable::ExecuteResult result,
-                          loaded_executable->Execute(
-                              absl::MakeSpan(&array, 1), execute_options,
-                              /*devices=*/BasicDeviceList::Create({device})));
+  TF_ASSERT_OK_AND_ASSIGN(
+      LoadedExecutable::ExecuteResult result,
+      loaded_executable->Execute(absl::MakeSpan(&array, 1), execute_options,
+                                 /*devices=*/client->MakeDeviceList({device})));
   TF_ASSERT_OK(result.status.Await());
   EXPECT_THAT(result.outputs, SizeIs(1));
 

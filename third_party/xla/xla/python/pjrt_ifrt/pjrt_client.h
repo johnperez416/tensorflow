@@ -54,8 +54,8 @@ limitations under the License.
 #include "xla/python/ifrt/value.h"
 #include "xla/python/pjrt_ifrt/pjrt_compiler.h"
 #include "xla/tsl/concurrency/ref_count.h"
+#include "xla/tsl/platform/logging.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/logging.h"
 
 namespace xla {
 namespace ifrt {
@@ -182,6 +182,11 @@ class PjRtClient final
       absl::Span<tsl::RCReference<Array>> arrays,
       ArrayCopySemantics array_copy_semantics,
       SingleDeviceShardSemantics single_device_shard_semantics) override;
+  absl::StatusOr<tsl::RCReference<Array>> AssembleArrayFromSingleDeviceArrays(
+      DType dtype, Shape shape, std::shared_ptr<const Sharding> sharding,
+      absl::Span<tsl::RCReference<Array>> arrays,
+      ArrayCopySemantics array_copy_semantics,
+      SingleDeviceShardSemantics single_device_shard_semantics) override;
 
   absl::StatusOr<std::vector<tsl::RCReference<Array>>> CopyArrays(
       absl::Span<tsl::RCReference<Array>> arrays,
@@ -250,6 +255,9 @@ class PjRtClient final
 
   absl::StatusOr<Device*> LookupAddressableDevice(
       int local_hardware_id) const override;
+
+  tsl::RCReference<DeviceList> MakeDeviceList(
+      absl::Span<Device* const> devices) const override;
 
   Compiler* GetDefaultCompiler() override {
     DCHECK(this);

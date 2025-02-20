@@ -32,11 +32,6 @@ tsl_pybind_extension(
         "-frtti",
     ],
     features = ["-use_header_modules"],
-    visibility = [
-        ":friends",
-        "//tensorflow/python:__pkg__",
-        "//tensorflow/tools/pip_package:__subpackages__",
-    ],
     deps = [
         "//third_party/python_runtime:headers",
         "@llvm-project//llvm:Support",
@@ -51,7 +46,6 @@ tsl_pybind_extension(
 pytype_strict_library(
     name = "stablehlo",
     srcs = ["stablehlo.py"],
-    srcs_version = "PY3",
     visibility = ["//visibility:public"],
     deps = [
         ":stablehlo_extension",
@@ -61,7 +55,6 @@ pytype_strict_library(
 py_strict_test(
     name = "stablehlo_test",
     srcs = ["stablehlo_test.py"],
-    python_version = "PY3",
     deps = [
         ":stablehlo",
         #internal proto upb dep

@@ -32,11 +32,11 @@ cc_library(
         "//xla/python/ifrt_proxy/client:registry",
         "//xla/python/ifrt_proxy/server:grpc_server",
         "//xla/python/pjrt_ifrt",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/strings",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_tsl//tsl/platform:test",
     ],
     alwayslink = True,
 )
@@ -54,6 +54,8 @@ ifrt_proxy_cc_test(
 ifrt_proxy_cc_test(
     name = "array_impl_test_tfrt_cpu",
     srcs = ["array_impl_test_tfrt_cpu.cc"],
+    # TODO(b/396205547): Remove `linkstatic = False`.
+    linkstatic = False,
     deps = [
         ":register_pjrt_cpu_for_ifrt_api_tests",
         "//xla/python/ifrt:array_impl_test_lib",
@@ -79,6 +81,8 @@ ifrt_proxy_cc_test(
     name = "remap_impl_test_tfrt_cpu",
     size = "small",
     srcs = ["remap_impl_test_tfrt_cpu.cc"],
+    # TODO(b/396205547): Remove `linkstatic = False`.
+    linkstatic = False,
     deps = [
         ":register_pjrt_cpu_for_ifrt_api_tests",  # buildcleaner: keep
         "//xla/python/ifrt:remap_impl_test_lib",
@@ -104,6 +108,9 @@ ifrt_proxy_cc_test(
         "//xla/python/ifrt_proxy/server:grpc_server",
         "//xla/python/pjrt_ifrt",
         "//xla/tsl/concurrency:ref_count",
+        "//xla/tsl/platform:status_matchers",
+        "//xla/tsl/platform:statusor",
+        "//xla/tsl/platform:test",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/log:check",
@@ -114,8 +121,5 @@ ifrt_proxy_cc_test(
         "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
-        "@local_tsl//tsl/platform:status_matchers",
-        "@local_tsl//tsl/platform:statusor",
-        "@local_tsl//tsl/platform:test",
     ],
 )

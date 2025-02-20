@@ -30,10 +30,12 @@ limitations under the License.
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeRange.h"
 #include "mlir/Support/LLVM.h"
 #include "shardy/dialect/sdy/ir/register.h"
 #include "shardy/dialect/sdy/ir/utils.h"
-#include "xla/mlir_hlo/mhlo/IR/hlo_ops.h"
+#include "stablehlo/dialect/StablehloOps.h"
 #include "xla/service/spmd/shardy/constants.h"
 
 namespace xla {
@@ -50,6 +52,7 @@ using ::mlir::StringRef;
 using xla::sdy::kFrontendAttributesAttr;
 
 using ::mlir::func::FuncOp;
+using ::mlir::stablehlo::CustomCallOp;
 
 DictionaryAttr getFrontendAttrs(Operation* op) {
   return op->getAttrOfType<DictionaryAttr>(kFrontendAttributesAttr);
@@ -179,10 +182,31 @@ bool hasKey(mlir::DictionaryAttr dictAttr, mlir::StringRef key) {
 void loadAllRequiredDialects(mlir::MLIRContext* context) {
   mlir::DialectRegistry registry;
   mlir::func::registerAllExtensions(registry);
-  registry.insert<mlir::mhlo::MhloDialect>();
   mlir::sdy::registerAllDialects(registry);
   context->appendDialectRegistry(registry);
   context->loadAllAvailableDialects();
+}
+
+CustomCallOp cloneCustomCallWithNewResultTypes(CustomCallOp op,
+                                               mlir::TypeRange resultTypes,
+                                               mlir::IRRewriter& rewriter) {
+  auto customCallOp = rewriter.create<CustomCallOp>(
+      op.getLoc(), resultTypes, op.getOperands(), op.getCallTargetNameAttr(),
+      op.getHasSideEffectAttr(), op.getBackendConfigAttr(),
+      op.getApiVersionAttr(), op.getCalledComputations(),
+      op.getOperandLayoutsAttr(), op.getResultLayoutsAttr(),
+      op.getOutputOperandAliases());
+  customCallOp->setDiscardableAttrs(mlir::DictionaryAttr::get(
+      op->getContext(), llvm::to_vector(op->getDiscardableAttrs())));
+  return customCallOp;
+};
+
+bool isPythonCallbackCustomCall(mlir::stablehlo::CustomCallOp op) {
+  mlir::StringRef targetName = op.getCallTargetName();
+  return targetName == kPythonCpuCallbackCustomCallTargetName ||
+         targetName == kPythonGpuCallbackCustomCallTargetName ||
+         targetName == kFFIPythonCpuCallbackCustomCallTargetName ||
+         targetName == kFFIPythonGpuCallbackCustomCallTargetName;
 }
 
 }  // namespace sdy

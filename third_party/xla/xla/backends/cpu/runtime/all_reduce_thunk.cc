@@ -30,16 +30,16 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/backends/cpu/runtime/collective_thunk.h"
 #include "xla/backends/cpu/runtime/thunk.h"
+#include "xla/core/collectives/communicator.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
 #include "xla/service/collective_ops_utils.h"
-#include "xla/service/cpu/collectives_interface.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/concurrency/async_value_ref.h"
 #include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
-#include "tsl/platform/statusor.h"
 #include "tsl/profiler/lib/traceme.h"
 
 namespace xla::cpu {
@@ -61,8 +61,9 @@ absl::StatusOr<std::unique_ptr<AllReduceThunk>> AllReduceThunk::Create(
 AllReduceThunk::AllReduceThunk(Info info, ReductionKind reduction_kind,
                                OpParams op_params, OpBuffers op_buffers,
                                OpResources op_resources, bool single_replica)
-    : CollectiveThunk(Kind::kAllReduce, std::move(info), std::move(op_params),
-                      std::move(op_buffers), std::move(op_resources)),
+    : CollectiveThunk(CollectiveKind::kAllReduce, std::move(info),
+                      std::move(op_params), std::move(op_buffers),
+                      std::move(op_resources)),
       reduction_kind_(reduction_kind),
       single_replica_(single_replica) {}
 

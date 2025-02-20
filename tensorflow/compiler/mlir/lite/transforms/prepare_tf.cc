@@ -71,7 +71,7 @@ limitations under the License.
 #include "tensorflow/compiler/mlir/lite/utils/attribute_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/constant_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/fake_quant_utils.h"
-#include "tensorflow/compiler/mlir/lite/utils/size_utils.h"
+#include "tensorflow/compiler/mlir/lite/utils/shape_and_size_utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/utils.h"
 #include "tensorflow/compiler/mlir/lite/utils/validators.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
@@ -1732,7 +1732,7 @@ void PrepareTFPass::runOnOperation() {
   // This will allow optimizing any TF_Mul->TF_Conv in the graph
   // and any expanded from FusedBatchNorm. We need to do this
   // before converting TF_Conv to TFL_Conv
-  (void)applyPatternsAndFoldGreedily(func, std::move(patterns));
+  (void)applyPatternsGreedily(func, std::move(patterns));
 
   // Remove the wrapper of the tf.FakeQuant* ops and also insert the
   // tfl.quantize and tfl.dequantize to preserve the quantization parameters.
@@ -1762,11 +1762,11 @@ void PrepareTFPass::runOnOperation() {
   // Remove redundant reshape ops.
   TF::ReshapeOp::getCanonicalizationPatterns(phase_2_patterns, ctx);
 
-  (void)applyPatternsAndFoldGreedily(func, std::move(phase_2_patterns));
+  (void)applyPatternsGreedily(func, std::move(phase_2_patterns));
 
   phase_3_patterns.add<QuantizeConcatResult>(ctx, use_fake_quant_num_bits_);
   phase_3_patterns.add<QuantizeMeanResult>(ctx, use_fake_quant_num_bits_);
-  (void)applyPatternsAndFoldGreedily(func, std::move(phase_3_patterns));
+  (void)applyPatternsGreedily(func, std::move(phase_3_patterns));
 }
 
 }  // namespace

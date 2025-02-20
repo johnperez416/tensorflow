@@ -150,8 +150,7 @@ struct TensorFlowOptimizePass
 
   void runOnOperation() override {
     auto func = getOperation();
-    if (failed(applyPatternsAndFoldGreedily(func, patterns)))
-      signalPassFailure();
+    if (failed(applyPatternsGreedily(func, patterns))) signalPassFailure();
   }
 
   FrozenRewritePatternSet patterns;
@@ -175,7 +174,8 @@ void CreateTFStandardPipeline(OpPassManager &pm,
   // Hopefully there is a single island left, or there wasn't any to begin with.
   // We now run the optimizer which operates mostly inside islands.
   func_pm.addPass(createCanonicalizerPass());
-  pm.addPass(CreateTFShapeInferencePass());
+  pm.addPass(CreateTFShapeInferencePass(
+      {}, options.enable_stablehlo_shape_propagation));
   if (options.enable_inliner) {
     pm.addPass(createInlinerPass());
   }

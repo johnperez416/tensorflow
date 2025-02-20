@@ -27,11 +27,24 @@ RUN /setup.python.sh python3.9 /builder.requirements.txt
 RUN /setup.python.sh python3.10 /builder.requirements.txt
 RUN /setup.python.sh python3.11 /builder.requirements.txt
 RUN /setup.python.sh python3.13 /builder.requirements.txt
+RUN /setup.python.sh python3.13-nogil /builder.requirements.txt
 
 # Since we are using python3.12 as the default python version, we need to
 # install python3.12 last for now.
 # TODO(b/376338367): switch to pyenv.
 RUN /setup.python.sh python3.12 /builder.requirements.txt
+
+COPY setup.sources.cudnn.sh /setup.sources.cudnn.sh
+ARG INSTALL_CUDNN=false
+ARG CUDA_PACKAGES_FILE=cuda12.1_cudnn9.1.packages.txt
+COPY ${CUDA_PACKAGES_FILE} /cudnn.packages.txt
+
+RUN if [ "${INSTALL_CUDNN}" = "true" ]; then \
+      echo "Installing cudnn"; \
+      /setup.sources.cudnn.sh && /setup.packages.sh /cudnn.packages.txt; \
+    else \
+      echo "cudnn is not installed"; \
+    fi
 
 # Setup links for TensorFlow to compile.
 # Referenced in devel.usertools/*.bazelrc.

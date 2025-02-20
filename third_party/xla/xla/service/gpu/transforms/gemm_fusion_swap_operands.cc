@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
+#include <utility>
 #include <vector>
 
 #include "absl/algorithm/container.h"
@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "xla/backends/gpu/codegen/triton/support.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_clone_context.h"
 #include "xla/hlo/ir/hlo_computation.h"
@@ -34,14 +35,13 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/utils/hlo_query.h"
-#include "xla/service/gpu/fusions/triton/triton_support.h"
 #include "xla/service/gpu/triton_fusion_analysis.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
+#include "xla/tsl/platform/errors.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/statusor.h"
 
 namespace xla {
 namespace gpu {
@@ -176,9 +176,9 @@ absl::StatusOr<bool> EmitterCanHandleSwappedOperands(
     const HloInstruction* dot) {
   auto tmp_module = HloModule("tmp", dot->parent()->parent()->config());
   HloCloneContext clone_context(&tmp_module);
-  std::unique_ptr<HloComputation> cloned_computation =
-      dot->parent()->CloneInContext(clone_context);
-  TF_RETURN_IF_ERROR(SwapDotOperandsInFusion(cloned_computation.get()));
+  HloComputation* cloned_computation = tmp_module.AddEntryComputation(
+      dot->parent()->CloneInContext(clone_context));
+  TF_RETURN_IF_ERROR(SwapDotOperandsInFusion(cloned_computation));
   return TritonFusionAnalysis::Execute(*cloned_computation).ok();
 }
 

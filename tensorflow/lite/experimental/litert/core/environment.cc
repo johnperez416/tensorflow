@@ -14,44 +14,31 @@
 
 #include "tensorflow/lite/experimental/litert/core/environment.h"
 
+#include <memory>
+
 #include "absl/types/span.h"
-#include "tensorflow/lite/experimental/litert/c/litert_common.h"
 #include "tensorflow/lite/experimental/litert/c/litert_environment.h"
 #include "tensorflow/lite/experimental/litert/c/litert_logging.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_expected.h"
+#include "tensorflow/lite/shared_library.h"
 
-namespace litert::internal {
-
-Environment* Environment::the_instance_ = nullptr;
-
-Expected<void> Environment::CreateWithOptions(
+litert::Expected<LiteRtEnvironmentT::Ptr> LiteRtEnvironmentT::CreateWithOptions(
     absl::Span<const LiteRtEnvOption> options) {
-  LITERT_LOG(LITERT_INFO, "Environment::CreateWithOptions the_instance_=%p",
-             the_instance_);
-  if (the_instance_) {
-    return Error(kLiteRtStatusErrorRuntimeFailure,
-                 "LiteRT environment cannot be created with options, it has "
-                 "already been created");
-  }
   LITERT_LOG(LITERT_INFO, "Creating LiteRT environment with options");
-  the_instance_ = new Environment();
+  auto env = std::make_unique<LiteRtEnvironmentT>();
   for (auto& option : options) {
-    the_instance_->options_[option.tag] = option.value;
+    env->options_[option.tag] = option.value;
   }
-  return {};
-}
 
-void Environment::Destroy() {
-  delete the_instance_;
-  the_instance_ = nullptr;
-}
-
-Expected<Environment*> Environment::Instance() {
-  if (!the_instance_) {
-    LITERT_LOG(LITERT_INFO, "Creating LiteRT environment with no options");
-    the_instance_ = new Environment();
+  // Find `LiteRtRegisterAcceleratorGpuOpenCl` to register the GPU delegate.
+  void* lib_opencl = nullptr;
+  auto opencl_registrar_func = reinterpret_cast<void (*)(LiteRtEnvironment)>(
+      tflite::SharedLibrary::GetLibrarySymbol(
+          lib_opencl, "LiteRtRegisterAcceleratorGpuOpenCl"));
+  if (opencl_registrar_func) {
+    LITERT_LOG(LITERT_INFO, "Found GPU Accelerator");
+    opencl_registrar_func(env.get());
   }
-  return the_instance_;
-}
 
-}  // namespace litert::internal
+  return env;
+}

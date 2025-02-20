@@ -15,14 +15,16 @@
 #include "tensorflow/lite/experimental/litert/core/model/model_buffer.h"
 
 #include <cstdint>
+#include <string>
 #include <utility>
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "tensorflow/lite/experimental/litert/c/litert_common.h"
 #include "tensorflow/lite/experimental/litert/c/litert_op_code.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_buffer_ref.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_expected.h"
-#include "tensorflow/lite/experimental/litert/cc/litert_macros.h"
-#include "tensorflow/lite/experimental/litert/core/byte_code_util.h"
 #include "tensorflow/lite/experimental/litert/core/filesystem.h"
 #include "tensorflow/lite/experimental/litert/core/model/model.h"
 #include "tensorflow/lite/experimental/litert/core/model/model_load.h"
@@ -32,28 +34,78 @@ namespace litert {
 namespace internal {
 
 Expected<OwningBufferRef<uint8_t>> GetModelBufWithByteCode(
-    LiteRtModelT&& model, BufferRef<uint8_t> npu_byte_code) {
-  LITERT_EXPECT_OK(model.PushMetadata(
-      kByteCodeMetadataKey, npu_byte_code.Data(), npu_byte_code.Size()));
+    LiteRtModelT&& model,
+    const absl::flat_hash_map<std::string, OwningBufferRef<uint8_t>>&
+        custom_code_to_npu_bytecode) {
+  for (const auto& subgraph : model.Subgraphs()) {
+    for (auto op : subgraph->Ops()) {
+      if (op->OpCode() == kLiteRtOpCodeTflCustom) {
+        auto custom_code = GetCustomOpCode(model, *op);
+        if (!custom_code) {
+          continue;
+        }
 
-  for (auto* subgraph : model.Subgraphs()) {
-    for (auto* op : subgraph->Ops()) {
-      if (op->OpCode() != kLiteRtOpCodeTflCustom) {
-        continue;
+        auto iter = custom_code_to_npu_bytecode.find(*custom_code);
+        if (iter == custom_code_to_npu_bytecode.end()) {
+          return Error(kLiteRtStatusErrorUnsupported,
+                       absl::StrFormat("Unexpected custom code: %s",
+                                       custom_code->c_str()));
+        }
+
+        LiteRtOpT* custom_op = op;
+        OwningBufferRef<uint8_t> byte_code(iter->second);
+        const auto buf_id =
+            model.Buffers()->RegisterOwnedBuffer(std::move(byte_code));
+        model.AttachAssetToOp(custom_op, buf_id, "");
       }
-      auto exec_info =
-          MakeExecInfo(op->CustomOptions().StrView(), kByteCodeMetadataKey);
-      if (!exec_info) {
-        return exec_info.Error();
-      }
-      op->SetCustomOptions(std::move(*exec_info));
     }
   }
 
-  auto build_stamp = MakeBuildStamp("", "", Serialization::kAppend);
-  LITERT_EXPECT_OK(model.PushMetadata(kLiteRtBuildStampKey, *build_stamp));
-
   return SerializeModel(std::move(model));
+}
+
+Expected<OwningBufferRef<uint8_t>> GetModelBufWithByteCode(
+    absl::string_view tfl_file,
+    const absl::flat_hash_map<std::string, std::string>&
+        custom_code_to_npu_file) {
+  auto model = LoadModelFromFile(tfl_file);
+  if (!model) {
+    return model.Error();
+  }
+
+  absl::flat_hash_map<std::string, OwningBufferRef<uint8_t>>
+      custom_code_to_npu_bytecode;
+  for (auto& iter : custom_code_to_npu_file) {
+    auto npu_file_buf = LoadBinaryFile(iter.second);
+    if (!npu_file_buf) {
+      return npu_file_buf.Error();
+    }
+    custom_code_to_npu_bytecode[iter.first] = std::move(*npu_file_buf);
+  }
+
+  return GetModelBufWithByteCode(std::move(**model),
+                                 custom_code_to_npu_bytecode);
+}
+
+Expected<OwningBufferRef<uint8_t>> GetModelBufWithByteCode(
+    LiteRtModelT&& model, BufferRef<uint8_t> npu_byte_code) {
+  absl::flat_hash_map<std::string, OwningBufferRef<uint8_t>>
+      custom_code_to_npu_bytecode;
+  for (const auto& subgraph : model.Subgraphs()) {
+    for (auto op : subgraph->Ops()) {
+      if (op->OpCode() == kLiteRtOpCodeTflCustom) {
+        auto custom_code = GetCustomOpCode(model, *op);
+        if (!custom_code) {
+          continue;
+        }
+        OwningBufferRef<uint8_t> byte_code(npu_byte_code.Data(),
+                                           npu_byte_code.Size());
+        custom_code_to_npu_bytecode[*custom_code] = std::move(byte_code);
+      }
+    }
+  }
+
+  return GetModelBufWithByteCode(std::move(model), custom_code_to_npu_bytecode);
 }
 
 Expected<OwningBufferRef<uint8_t>> GetModelBufWithByteCode(

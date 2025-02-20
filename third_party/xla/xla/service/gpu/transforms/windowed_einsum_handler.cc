@@ -959,6 +959,12 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
     // Rewrites an all-to-all+gemm into multiple independent partial a2a+gemms
     // to minimize communication overhead. To do this, the original input will
     // be sliced into replica_group size and perform all-to-all+gemm.
+    if (!dot->GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_experimental_enable_alltoall_windowed_einsum()) {
+      return absl::OkStatus();
+    }
     HloInstruction* lhs;
     HloInstruction* rhs;
     std::vector<xla::ReplicaGroup> replica_groups;
@@ -1183,6 +1189,12 @@ class WindowedEinsumVisitor : public DfsHloRewriteVisitor {
   absl::Status HandleAllToAll(HloInstruction* inst) override {
     CHECK_EQ(inst->opcode(), HloOpcode::kAllToAll);
     HloComputation* comp = inst->parent();
+    if (!inst->GetModule()
+             ->config()
+             .debug_options()
+             .xla_gpu_experimental_enable_alltoall_windowed_einsum()) {
+      return absl::OkStatus();
+    }
     // Rewrites a gemm+alltoall into multiple independent partial gemm+a2as
     // to minimize communication overhead.
     std::vector<xla::ReplicaGroup> replica_groups;
@@ -1415,10 +1427,8 @@ absl::StatusOr<bool> WindowedEinsumHandler::Run(
       // The loop is fully unrolled but has a trip count of 1
       // To prevent it from being inlined by while loop simplifier,
       // we add this attribute to it.
-      xla::FrontendAttributes attributes;
-      (*attributes.mutable_map())["skip-simplify-while-loops_trip-count-one"] =
-          "true";
-      result.new_while_op->add_frontend_attributes(attributes);
+      result.new_while_op->set_frontend_attribute(
+          "skip-simplify-while-loops_trip-count-one", "true");
       TF_RETURN_IF_ERROR(
           PostProcessUnrolledLoop(result.new_while_op, stream_id));
     }

@@ -14,11 +14,7 @@
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
-    default_visibility = [
-        # copybara:uncomment "//third_party/mediapipe/calculators/tensor:__subpackages__",
-        # copybara:uncomment "//third_party/odml/infra:__subpackages__",
-        "//tensorflow/lite/experimental/litert:__subpackages__",
-    ],
+    default_visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -27,6 +23,7 @@ cc_library(
     deps = [
         ":litert_any",
         ":litert_expected",
+        ":litert_handle",
         "//tensorflow/lite/experimental/litert/c:litert_common",
         "//tensorflow/lite/experimental/litert/c:litert_environment",
         "@com_google_absl//absl/types:span",
@@ -50,8 +47,10 @@ cc_library(
     hdrs = ["litert_any.h"],
     deps = [
         ":litert_expected",
+        ":litert_macros",
         "//tensorflow/lite/experimental/litert/c:litert_any",
         "//tensorflow/lite/experimental/litert/c:litert_common",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
     ],
 )
@@ -131,6 +130,7 @@ cc_library(
     deps = [
         ":litert_detail",
         ":litert_event",
+        ":litert_expected",
         ":litert_handle",
         ":litert_model",
         "//tensorflow/lite/c:c_api_types",
@@ -138,8 +138,8 @@ cc_library(
         "//tensorflow/lite/experimental/litert/c:litert_event",
         "//tensorflow/lite/experimental/litert/c:litert_model",
         "//tensorflow/lite/experimental/litert/c:litert_tensor_buffer",
-        "//tensorflow/lite/experimental/litert/cc:litert_expected",
         "@com_google_absl//absl/types:span",
+        "@opencl_headers",
     ],
 )
 
@@ -212,9 +212,21 @@ cc_library(
     name = "litert_macros",
     hdrs = ["litert_macros.h"],
     deps = [
+        ":litert_expected",
         "//tensorflow/lite/experimental/litert/c:litert_common",
         "//tensorflow/lite/experimental/litert/c:litert_logging",
         "@com_google_absl//absl/log:absl_check",
+    ],
+)
+
+cc_test(
+    name = "litert_macros_test",
+    srcs = ["litert_macros_test.cc"],
+    deps = [
+        ":litert_expected",
+        ":litert_macros",
+        "//tensorflow/lite/experimental/litert/c:litert_common",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -225,7 +237,8 @@ cc_library(
         ":litert_detail",
         "//tensorflow/lite/experimental/litert/c:litert_common",
         "@com_google_absl//absl/log:absl_check",
-        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -235,8 +248,8 @@ cc_test(
     deps = [
         ":litert_buffer_ref",
         ":litert_expected",
-        ":litert_macros",
         "//tensorflow/lite/experimental/litert/c:litert_common",
+        "@com_google_absl//absl/strings",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -247,6 +260,24 @@ cc_library(
     deps = [
         "//tensorflow/lite/experimental/litert/c:litert_common",
         "@com_google_absl//absl/log:absl_check",
+    ],
+)
+
+# Dispatch Delegate of LiteRt.
+# Warning: This API is not ABI stable and is subject to change.
+cc_library(
+    name = "litert_dispatch_delegate",
+    hdrs = [
+        "litert_dispatch_delegate.h",
+    ],
+    deps = [
+        "//tensorflow/lite/c:c_api",
+        "//tensorflow/lite/c:c_api_opaque",
+        "//tensorflow/lite/c:c_api_types",
+        "//tensorflow/lite/c:common",
+        "//tensorflow/lite/delegates/utils:simple_opaque_delegate",
+        "//tensorflow/lite/experimental/litert/c:litert_environment",
+        "//tensorflow/lite/experimental/litert/runtime/dispatch:dispatch_delegate",
     ],
 )
 
@@ -333,9 +364,10 @@ cc_library(
     srcs = ["litert_compiled_model.cc"],
     hdrs = ["litert_compiled_model.h"],
     deps = [
-        ":litert_detail",
+        ":litert_environment",
         ":litert_expected",
         ":litert_handle",
+        ":litert_macros",
         ":litert_model",
         ":litert_tensor_buffer",
         "//tensorflow/lite:framework",
@@ -346,6 +378,7 @@ cc_library(
         "//tensorflow/lite/experimental/litert/c:litert_common",
         "//tensorflow/lite/experimental/litert/c:litert_compiled_model",
         "//tensorflow/lite/experimental/litert/c:litert_compiled_model_options",
+        "//tensorflow/lite/experimental/litert/c:litert_environment",
         "//tensorflow/lite/experimental/litert/c:litert_model",
         "//tensorflow/lite/experimental/litert/c:litert_tensor_buffer",
         "//tensorflow/lite/kernels:builtin_ops",
@@ -362,12 +395,15 @@ cc_test(
     ],
     deps = [
         ":litert_compiled_model",
+        ":litert_environment",
         ":litert_model",
         ":litert_tensor_buffer",
         "//tensorflow/lite:framework",
         "//tensorflow/lite/c:c_api_opaque",
         "//tensorflow/lite/c:common",
+        "//tensorflow/lite/experimental/litert/c:litert_common",
         "//tensorflow/lite/experimental/litert/test:common",
+        "//tensorflow/lite/experimental/litert/test:matchers",
         "//tensorflow/lite/experimental/litert/test:simple_model",
         "//tensorflow/lite/kernels:builtin_ops",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -375,6 +411,48 @@ cc_test(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
         "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# copybara:uncomment_begin(google-only)
+# cc_test(
+#     name = "litert_compiled_model_gpu_test",
+#     srcs = ["litert_compiled_model_gpu_test.cc"],
+#     data = [
+#         "//tensorflow/lite/experimental/litert/test:testdata/simple_model.tflite",
+#     ],
+#     tags = [
+#         "requires-gpu-nvidia",
+#     ],
+#     deps = [
+#         ":litert_compiled_model",
+#         ":litert_environment",
+#         ":litert_model",
+#         ":litert_tensor_buffer",
+#         "@com_google_googletest//:gtest_main",
+#         "@com_google_absl//absl/debugging:leak_check",
+#         "@com_google_absl//absl/log:absl_log",
+#         "@com_google_absl//absl/strings:string_view",
+#         "@com_google_absl//absl/types:span",
+#         "//third_party/odml/infra/ml_drift_delegate:ml_drift_cl_accelerator",  # buildcleaner: keep
+#         "//tensorflow/lite:framework",
+#         "//tensorflow/lite/c:c_api_opaque",
+#         "//tensorflow/lite/c:common",
+#         "//tensorflow/lite/experimental/litert/c:litert_common",
+#         "//tensorflow/lite/experimental/litert/test:common",
+#         "//tensorflow/lite/experimental/litert/test:simple_model",
+#         "//tensorflow/lite/kernels:builtin_ops",
+#     ],
+# )
+# copybara:uncomment_end
+
+cc_library(
+    name = "litert_tensor_buffer_utils",
+    srcs = ["litert_tensor_buffer_utils.cc"],
+    hdrs = ["litert_tensor_buffer_utils.h"],
+    deps = [
+        "//tensorflow/lite/experimental/litert/c:litert_logging",
+        "//tensorflow/lite/experimental/litert/c:litert_tensor_buffer",
     ],
 )
 

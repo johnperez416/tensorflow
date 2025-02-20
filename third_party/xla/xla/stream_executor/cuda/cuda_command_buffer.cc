@@ -199,7 +199,7 @@ absl::Status CudaCommandBuffer::LaunchSetWhileConditionKernel(
 
 absl::Status CudaCommandBuffer::LaunchSetCaseConditionKernel(
     ExecutionScopeId execution_scope_id, GraphConditionalHandles conditionals,
-    DeviceMemory<int32_t> index, int32_t batch_offset,
+    DeviceMemory<uint8_t> index, bool index_is_bool, int32_t batch_offset,
     bool enable_conditional_default) {
   constexpr int kCaseBranchBatchSize = 8;
   CHECK(conditionals.size() <= kCaseBranchBatchSize);
@@ -220,12 +220,12 @@ absl::Status CudaCommandBuffer::LaunchSetCaseConditionKernel(
                    return ToCudaGraphHandle(conditional);
                  });
 
-  return Launch(set_case_condition_kernel_, execution_scope_id, ThreadDim(),
-                BlockDim(), padded_handles[0], padded_handles[1],
-                padded_handles[2], padded_handles[3], padded_handles[4],
-                padded_handles[5], padded_handles[6], padded_handles[7], index,
-                batch_offset, static_cast<int32_t>(conditionals.size()),
-                enable_conditional_default);
+  return Launch(
+      set_case_condition_kernel_, execution_scope_id, ThreadDim(), BlockDim(),
+      padded_handles[0], padded_handles[1], padded_handles[2],
+      padded_handles[3], padded_handles[4], padded_handles[5],
+      padded_handles[6], padded_handles[7], index, index_is_bool, batch_offset,
+      static_cast<int32_t>(conditionals.size()), enable_conditional_default);
 }
 
 absl::StatusOr<CudaCommandBuffer::NoOpKernel*>
@@ -534,6 +534,11 @@ absl::StatusOr<GraphNodeHandle> CudaCommandBuffer::CreateBarrierNode(
 
 absl::Status CudaCommandBuffer::Trace(
     Stream* stream, absl::AnyInvocable<absl::Status()> function) {
+#if CUDA_VERSION < 12030
+  return absl::UnimplementedError(
+      "StreamBeginCaptureToGraph is not implemented for CUDA below version "
+      "12.3. Therefore tracing is not supported.");
+#else
   if (parent_->GetDeviceDescription().driver_version() <
       SemanticVersion{12, 3, 0}) {
     return absl::UnimplementedError(
@@ -577,6 +582,7 @@ absl::Status CudaCommandBuffer::Trace(
           << (end_nanos - start_nanos) / 1000 << " μs)";
 
   return absl::OkStatus();
+#endif
 }
 
 absl::Status CudaCommandBuffer::SetNodeExecutionEnabled(

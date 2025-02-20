@@ -38,30 +38,35 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/OperationSupport.h"
-#include "mlir/Support/FileUtilities.h"
 #include "mlir/Transforms/LocationSnapshot.h"
+#include "xla/debug_options_flags.h"
 #include "xla/hlo/ir/hlo_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/hlo/ir/hlo_opcode.h"
+#include "xla/runtime/large_hlo_snapshot_serialization/serialization.h"
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_proto_util.h"
 #include "xla/tsl/lib/io/zlib_compression_options.h"
 #include "xla/tsl/lib/io/zlib_outputbuffer.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/file_system.h"
+#include "xla/tsl/platform/file_system_helper.h"
 #include "xla/util.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/errors.h"
-#include "tsl/platform/file_system.h"
 #include "tsl/platform/path.h"
+#include "tsl/platform/platform.h"
+#include "tsl/platform/protobuf.h"
 #include "tsl/platform/regexp.h"
-#include "tsl/platform/status.h"
 #include "tsl/profiler/lib/scoped_annotation.h"
+
+// BuildData isn't available in OSS.
+#if !TSL_IS_IN_OSS
+#include "absl/base/builddata.h"
+#endif  // TSL_IS_IN_OSS
 
 namespace xla {
 
@@ -217,6 +222,14 @@ struct CanonicalDebugOptions {
         should_dump_pass = [](string_view) { return false; };
         should_dump_pipeline = [](string_view) { return false; };
       }
+    }
+
+    // Dumping unoptimized HLO snapshots should not trigger dumping of all
+    // available information for the HLO module and pipelines.
+
+    if (dump_unoptimized_snapshots) {
+      should_dump_module = [](string_view) { return false; };
+      should_dump_pipeline = [](string_view) { return false; };
     }
   }
 
@@ -634,11 +647,20 @@ std::string FilenameFor(int unique_id, string_view module_name,
   if (!module_name.empty()) {
     absl::StrAppend(&filename, ".", module_name);
   }
+
+#if !TSL_IS_IN_OSS
+  absl::string_view cl_number = BuildData::Changelist();
+  if (!cl_number.empty()) {
+    absl::StrAppend(&filename, ".cl_", cl_number);
+  }
+#endif  // !TSL_IS_IN_OSS
+
   absl::StrAppend(&filename, ".", suffix);
   // Skip the module name if the resulting length is too long.
   if (!module_name.empty() && filename.size() > 255) {
     return FilenameFor(unique_id, "", prefix, suffix);
   }
+
   return filename;
 }
 
@@ -757,6 +779,22 @@ std::vector<std::string> DumpHloModuleIfEnabled(
   CanonicalDebugOptions opts(module.config().debug_options());
   if (opts.should_dump_module(module.name())) {
     DumpHloModuleImpl(module, &buffer_assn, TimestampFor(module), name, opts);
+  }
+  return {};
+}
+
+std::vector<std::string> DumpHloModuleProtoIfEnabled(
+    const HloModuleProto& module_proto, absl::string_view name) {
+  auto config = xla::HloModule::CreateModuleConfigFromProto(
+      module_proto, xla::GetDebugOptionsFromFlags());
+
+  auto module =
+      xla::HloModule::CreateFromProto(module_proto, config.value()).value();
+
+  CanonicalDebugOptions opts(module->config().debug_options());
+  if (opts.should_dump_module(module->name())) {
+    return DumpHloModuleImpl(*module, /*buffer_assn=*/nullptr,
+                             TimestampFor(*module), name, opts);
   }
   return {};
 }
@@ -889,8 +927,7 @@ void DumpHloUnoptimizedSnapshotIfEnabled(
     const HloUnoptimizedSnapshot& hlo_snapshot, const DebugOptions& opts) {
   CanonicalDebugOptions canonical_opts(opts);
   std::string name = hlo_snapshot.hlo_module().name();
-  if (!canonical_opts.should_dump_module(name) ||
-      !canonical_opts.dump_unoptimized_snapshots) {
+  if (!canonical_opts.dump_unoptimized_snapshots) {
     return;
   }
 
@@ -912,7 +949,37 @@ void DumpHloUnoptimizedSnapshotIfEnabled(
       hlo_snapshot.hlo_module().id(), hlo_snapshot.hlo_module().name(), "",
       absl::StrFormat("execution_%04d.hlo_unoptimized_snapshot",
                       execution_count));
-  DumpProtobufToFile(hlo_snapshot, opts, filename, nullptr);
+  // We use a custom proto binary serialization for HloUnoptimizedSnapshot to
+  // bypass the 2GiB proto size limitation.
+  if (canonical_opts.dump_as_proto && !canonical_opts.dump_as_text) {
+    tsl::Env* env = tsl::Env::Default();
+    const std::string& dir = canonical_opts.dump_to;
+    if (dir.empty()) {
+      return;
+    }
+    if (!CreateDirIfNeeded(dir, env).ok()) {
+      return;
+    }
+    const std::string path = tsl::io::JoinPath(dir, filename);
+
+    std::unique_ptr<tsl::WritableFile> file;
+    absl::Status s = env->NewWritableFile(absl::StrCat(path, ".pb"), &file);
+    if (!s.ok()) {
+      LOG(ERROR) << "Could not create file " << filename << ": " << s;
+      return;
+    }
+    tsl::WritableFileCopyingOutputStream output_stream(file.get());
+    tsl::protobuf::io::CopyingOutputStreamAdaptor adaptor(&output_stream);
+    if (!SerializeHloUnoptimizedSnapshot(hlo_snapshot, &adaptor).ok()) {
+      LOG(ERROR) << "Failed to serialize HLO unoptimized snapshot proto";
+    }
+    adaptor.Flush();
+    if (!file->Close().ok()) {
+      LOG(ERROR) << "Failed to close HLO unoptimized snapshot proto file";
+    }
+  } else {
+    DumpProtobufToFile(hlo_snapshot, opts, filename, nullptr);
+  }
 }
 
 void DumpHloModuleMetadataIfEnabled(const std::vector<HloModule*>& modules) {

@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "tensorflow/lite/experimental/litert/c/litert_common.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_buffer_ref.h"
@@ -78,7 +79,8 @@ bool Exists(absl::string_view path) { return StdExists(MakeStdPath(path)); }
 Expected<size_t> Size(absl::string_view path) {
   auto std_path = MakeStdPath(path);
   if (!StdExists(std_path)) {
-    return Error(kLiteRtStatusErrorNotFound, "File not found");
+    return Error(kLiteRtStatusErrorNotFound,
+                 absl::StrFormat("File not found: %s", std_path.c_str()));
   }
   return StdSize(std_path);
 }
@@ -87,11 +89,12 @@ Expected<OwningBufferRef<uint8_t>> LoadBinaryFile(absl::string_view path) {
   auto std_path = MakeStdPath(path);
 
   if (!StdExists(std_path)) {
-    return Error(kLiteRtStatusErrorFileIO, "File not found");
+    return Error(kLiteRtStatusErrorNotFound,
+                 absl::StrFormat("File not found: %s", std_path.c_str()));
   }
 
   OwningBufferRef<uint8_t> buf(StdSize(std_path));
-  LITERT_EXPECT_OK(StdIFRead(std_path, buf.StrData(), buf.Size()));
+  LITERT_RETURN_IF_ERROR(StdIFRead(std_path, buf.StrData(), buf.Size()));
 
   return buf;
 }

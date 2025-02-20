@@ -35,7 +35,6 @@
 #include "tensorflow/lite/experimental/litert/cc/litert_macros.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_model.h"
 #include "tensorflow/lite/experimental/litert/compiler/plugin/compiler_plugin.h"
-#include "tensorflow/lite/experimental/litert/core/byte_code_util.h"
 #include "tensorflow/lite/experimental/litert/core/model/model_serialize.h"
 #include "tensorflow/lite/experimental/litert/core/util/flatbuffer_tools.h"
 #include "tensorflow/lite/experimental/litert/tools/dump.h"
@@ -47,7 +46,6 @@ using ::litert::BufferRef;
 using ::litert::internal::CompilerPlugin;
 using ::litert::internal::Dump;
 using ::litert::internal::PartitionResult;
-using ::litert::internal::Serialization;
 using ::litert::internal::SerializeModel;
 using ::litert::internal::VerifyFlatbuffer;
 using ::litert::tools::ApplyPluginRun;
@@ -84,9 +82,9 @@ class Context {
     return run_->soc_manufacturer.value();
   }
 
-  std::ostream& Out() {
-    ABSL_CHECK_EQ(run_->outs.size(), 1);
-    return run_->outs.front();
+  std::ostream& Out(size_t out_ind = 0) {
+    ABSL_CHECK_GE(run_->outs.size(), 1);
+    return run_->outs.at(out_ind);
   }
 
   OutStream SwapOut(OutStream out) {
@@ -96,7 +94,7 @@ class Context {
     return res;
   }
 
-  Serialization Serialization() const { return run_->serialization; }
+  uint32_t NumOuts() const { return run_->outs.size(); }
 
   const ApplyPluginRun& Run() const { return *run_; }
   ApplyPluginRun& Run() { return *run_; }
@@ -343,7 +341,6 @@ LiteRtStatus ValidateCompileRun(const ApplyPluginRun& run) {
   LITERT_ENSURE_CONFIG(!run.lib_search_paths.empty());
   LITERT_ENSURE_CONFIG(run.model.has_value());
   LITERT_ENSURE_CONFIG(run.soc_manufacturer.has_value());
-  LITERT_ENSURE_CONFIG(run.outs.size() == run.soc_models.size());
   // TODO: implement multi target compilation.
   LITERT_ENSURE_SUPPORTED(run.soc_models.size() == 1,
                           "Multi target compilation not implemented.");
@@ -365,28 +362,36 @@ LiteRtStatus Compile(Context& ctx) {
   ctx.Dump().Start("Compiling");
   DumpCompilationRequest(ctx.Dump(), ctx.SocModelTarget(),
                          model.NumSubgraphs());
-  auto compilation_result =
-      plugin->Compile(model.Subgraphs(), ctx.SocModelTarget());
+  auto compilation_result = plugin->Compile(&model, ctx.SocModelTarget());
   if (!compilation_result) {
     ctx.Dump().Fail();
     return compilation_result.Error().Status();
   }
 
-  auto byte_code = compilation_result->ByteCode();
-  if (!byte_code) {
+  auto num_byte_code = compilation_result->NumByteCodeModules();
+  if (*num_byte_code < 1) {
     ctx.Dump().Fail();
     return compilation_result.Error().Status();
   }
-
-  auto num_calls = compilation_result->NumCalls();
-  if (!num_calls) {
+  if (!num_byte_code) {
     ctx.Dump().Fail();
     return compilation_result.Error().Status();
   }
+  for (int i = 0; i < ctx.NumOuts(); ++i) {
+    auto byte_code = compilation_result->ByteCode(i);
+    if (!byte_code) {
+      ctx.Dump().Fail();
+      return compilation_result.Error().Status();
+    }
+    auto num_calls = compilation_result->NumCalls();
+    if (!num_calls) {
+      ctx.Dump().Fail();
+      return compilation_result.Error().Status();
+    }
 
-  DumpCompilationResult(ctx.Dump(), byte_code->Size(), *num_calls);
-
-  byte_code->WriteStr(ctx.Out());
+    DumpCompilationResult(ctx.Dump(), byte_code->Size(), *num_calls);
+    byte_code->WriteStr(ctx.Out(i));
+  }
   ctx.Dump().Done();
 
   return kLiteRtStatusOk;
@@ -404,8 +409,6 @@ LiteRtStatus ValidateApplyRun(const ApplyPluginRun& run) {
   // TODO: implement multi target compilation.
   LITERT_ENSURE_SUPPORTED(run.soc_models.size() == 1,
                           "Multi target compilation not implemented.");
-  LITERT_ENSURE_SUPPORTED(run.serialization != Serialization::kUnknown,
-                          "No serialization strategy supported.");
   return kLiteRtStatusOk;
 }
 
@@ -422,10 +425,10 @@ LiteRtStatus Apply(Context& ctx) {
   }
 
   ctx.Dump().Start("Applying plugin");
-  if (auto status = litert::internal::ApplyPlugin(
-          *plugin, model, ctx.SocModelTarget(), ctx.Serialization());
+  if (auto status =
+          litert::internal::ApplyPlugin(*plugin, model, ctx.SocModelTarget());
       !status) {
-    LITERT_LOG(LITERT_ERROR, "%s", status.Error().Message().data());
+    LITERT_LOG(LITERT_ERROR, "%s", status.Error().Message().c_str());
     return status.Error().Status();
   }
   ctx.Dump().Done();

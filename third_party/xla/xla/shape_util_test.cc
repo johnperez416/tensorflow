@@ -29,16 +29,16 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
+#include "xla/hlo/testlib/test.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/shape.h"
-#include "xla/test.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/test_benchmark.h"
+#include "xla/tsl/platform/threadpool.h"
 #include "xla/util.h"
 #include "xla/xla_data.pb.h"
-#include "tsl/platform/env.h"
 #include "tsl/platform/protobuf.h"
-#include "tsl/platform/test_benchmark.h"
-#include "tsl/platform/threadpool.h"
 
 namespace xla {
 namespace {

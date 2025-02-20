@@ -16,28 +16,26 @@
 
 #include <array>
 #include <sstream>
-#include <string>
 #include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "testing/base/public/unique-test-directory.h"
 #include "absl/strings/string_view.h"
 #include "tensorflow/lite/experimental/litert/c/litert_common.h"
+#include "tensorflow/lite/experimental/litert/c/litert_model.h"
 #include "tensorflow/lite/experimental/litert/c/litert_op_code.h"
 #include "tensorflow/lite/experimental/litert/cc/litert_environment.h"
-#include "tensorflow/lite/experimental/litert/core/byte_code_util.h"
+#include "tensorflow/lite/experimental/litert/core/build_stamp.h"
 #include "tensorflow/lite/experimental/litert/core/filesystem.h"
+#include "tensorflow/lite/experimental/litert/core/model/model.h"
 #include "tensorflow/lite/experimental/litert/test/common.h"
-#include "tensorflow/lite/experimental/litert/test/test_macros.h"
 #include "tensorflow/lite/experimental/litert/tools/dump.h"
 
 namespace litert::internal {
 namespace {
 
-using ::testing::HasSubstr;
-using ::testing::UniqueTestDirectory;
+using testing::UniqueTestDirectory;
 
 constexpr absl::string_view kTestPluginSearchPath =
     "third_party/tensorflow/lite/experimental/litert/vendors/examples";
@@ -55,8 +53,9 @@ TEST(CompilerPluginTest, LoadTestPlugin) {
 }
 
 TEST(CompilerPluginTest, LoadTestPluginWithMalformed) {
-  const auto dir = UniqueTestDirectory();
-  Touch(Join({dir, "notLibLiteRt.so"}));
+  const auto dir = UniqueTestDirectory::Create();
+  ASSERT_TRUE(dir);
+  Touch(Join({dir->Str(), "notLibLiteRt.so"}));
 
   auto plugins = CompilerPlugin::LoadPlugins({kTestPluginSearchPath});
 
@@ -125,7 +124,7 @@ TEST(CompilerPluginTest, Compile) {
   auto model_wrap = testing::LoadTestFileModel("mul_simple.tflite");
   auto& model = *model_wrap.Get();
 
-  auto result = plugins->front().Compile(model.Subgraphs());
+  auto result = plugins->front().Compile(&model);
   ASSERT_TRUE(result);
 
   auto byte_code = result->ByteCode();
@@ -137,7 +136,6 @@ TEST(CompilerPluginTest, Compile) {
 
   auto call_info = result->CallInfo(0);
   ASSERT_TRUE(call_info);
-  ASSERT_FALSE(call_info->empty());
 }
 
 TEST(CompilerPluginTest, Dump) {
@@ -173,6 +171,27 @@ TEST(PartitionModelTest, Simple) {
   EXPECT_EQ(subgraphs.Elements().front()->Ops().size(), 2);
 }
 
+TEST(PartitionModelTest, PartitionDirect) {
+  auto model_wrap = testing::LoadTestFileModel("mul_simple.tflite");
+  auto& model = *model_wrap.Get();
+
+  std::vector<LiteRtOpWithPartitionIndex> selected_ops = {
+      {model.MainSubgraph()->Ops().front(), 0},
+      {model.MainSubgraph()->Ops().back(), 0}};
+
+  auto partition_result = PartitionModelDirect(std::move(selected_ops), model);
+  ASSERT_TRUE(partition_result);
+  ASSERT_EQ(model.NumSubgraphs(), 1);
+
+  const auto& [ops, subgraphs] = *partition_result;
+
+  EXPECT_EQ(ops.size(), 1);
+  EXPECT_EQ(ops.front()->OpCode(), kLiteRtOpCodeTflCustom);
+
+  EXPECT_EQ(subgraphs.Size(), 1);
+  EXPECT_EQ(subgraphs.Elements().front()->Ops().size(), 2);
+}
+
 TEST(PartitionModelTest, MultiSubgraph) {
   auto model_wrap = testing::LoadTestFileModel("multi_subgraph_mul.tflite");
   auto& model = *model_wrap.Get();
@@ -196,6 +215,43 @@ TEST(PartitionModelTest, MultiSubgraph) {
   EXPECT_EQ(subgraphs.Elements().back()->Ops().size(), 1);
 }
 
+TEST(PartitionModelTest, CstMultiSubgraph) {
+  auto model_wrap = testing::LoadTestFileModel("multi_use_cst.tflite");
+  auto& model = *model_wrap.Get();
+  ASSERT_EQ(model.MainSubgraph()->Ops().size(), 3);
+
+  std::vector<LiteRtOpWithPartitionIndex> selected_ops = {
+      {model.MainSubgraph()->Ops().front(), 0},
+      {model.MainSubgraph()->Ops().back(), 0},
+  };
+  auto partition_result = PartitionModelDirect(std::move(selected_ops), model);
+  ASSERT_TRUE(partition_result);
+
+  const auto& [ops, subgraphs] = *partition_result;
+
+  EXPECT_EQ(ops.size(), 2);
+  EXPECT_EQ(ops.front()->OpCode(), kLiteRtOpCodeTflCustom);
+  EXPECT_EQ(ops.back()->OpCode(), kLiteRtOpCodeTflCustom);
+
+  EXPECT_EQ(subgraphs.Size(), 2);
+  EXPECT_EQ(subgraphs.Elements().front()->Ops().size(), 1);
+  EXPECT_EQ(subgraphs.Elements().back()->Ops().size(), 1);
+
+  const auto& cst_1 =
+      subgraphs.Elements().front()->Ops().front()->Input(1).Weights();
+  const auto& cst_2 =
+      subgraphs.Elements().back()->Ops().front()->Input(1).Weights();
+
+  // Both weights should have the same object managed by the same buffer
+  // manager.
+  ASSERT_EQ(cst_1.GetBufferManager(), model.Buffers());
+  ASSERT_EQ(cst_2.GetBufferManager(), model.Buffers());
+  ASSERT_GT(cst_1.Buffer().Size(), 0);
+  ASSERT_GT(cst_2.Buffer().Size(), 0);
+  EXPECT_EQ(cst_1.GetBufferId(), cst_2.GetBufferId());
+  ASSERT_EQ(cst_1.Buffer().Data(), cst_2.Buffer().Data());
+}
+
 TEST(ApplyTest, Simple) {
   auto plugins = CompilerPlugin::LoadPlugins({kTestPluginSearchPath});
   ASSERT_EQ(plugins->size(), 1);
@@ -209,12 +265,36 @@ TEST(ApplyTest, Simple) {
   auto& subgraph = *model.MainSubgraph();
   ASSERT_EQ(subgraph.Ops().size(), 1);
 
-  EXPECT_EQ(subgraph.Op(0).OpCode(), kLiteRtOpCodeTflCustom);
-  EXPECT_THAT(subgraph.Op(0).CustomOptions().StrView(),
-              HasSubstr(kByteCodeMetadataKey));
+  auto* op = subgraph.Ops().front();
 
-  EXPECT_TRUE(model.FindMetadata(kByteCodeMetadataKey));
+  EXPECT_EQ(op->OpCode(), kLiteRtOpCodeTflCustom);
+  EXPECT_TRUE(model.FindOpAsset(op));
+
   EXPECT_TRUE(model.FindMetadata(kLiteRtBuildStampKey));
+}
+
+TEST(ApplyTest, WithPartition) {
+  auto model_wrap = testing::LoadTestFileModel("mul_simple.tflite");
+  auto& model = *model_wrap.Get();
+
+  auto plugins = CompilerPlugin::LoadPlugins({kTestPluginSearchPath});
+  ASSERT_EQ(plugins->size(), 1);
+  auto& plugin = plugins->front();
+
+  auto partition_result = PartitionModel(plugin, model);
+  ASSERT_TRUE(partition_result);
+  ASSERT_EQ(model.NumSubgraphs(), 1);
+
+  ASSERT_TRUE(ApplyPluginWithPartition(plugins->front(), model,
+                                       std::move(*partition_result)));
+
+  auto& subgraph = model.Subgraph(0);
+  ASSERT_EQ(subgraph.Ops().size(), 1);
+
+  auto* op = subgraph.Ops().front();
+
+  EXPECT_EQ(op->OpCode(), kLiteRtOpCodeTflCustom);
+  EXPECT_TRUE(model.FindOpAsset(op));
 }
 
 TEST(ApplyTest, MultiSubgraph) {
@@ -227,41 +307,48 @@ TEST(ApplyTest, MultiSubgraph) {
   ASSERT_TRUE(ApplyPlugin(plugins->front(), model));
   ASSERT_EQ(model.NumSubgraphs(), 2);
 
-  auto& subgraph = model.Subgraph(0);
-  ASSERT_EQ(subgraph.Ops().size(), 1);
-  EXPECT_EQ(subgraph.Op(0).OpCode(), kLiteRtOpCodeTflCustom);
-  EXPECT_THAT(subgraph.Op(0).CustomOptions().StrView(),
-              HasSubstr(kByteCodeMetadataKey));
+  {
+    auto& subgraph = model.Subgraph(0);
+    ASSERT_EQ(subgraph.Ops().size(), 1);
 
-  auto& subgraph2 = model.Subgraph(1);
-  ASSERT_EQ(subgraph2.Ops().size(), 1);
-  EXPECT_EQ(subgraph2.Op(0).OpCode(), kLiteRtOpCodeTflCustom);
-  EXPECT_THAT(subgraph2.Op(0).CustomOptions().StrView(),
-              HasSubstr(kByteCodeMetadataKey));
+    auto* op = subgraph.Ops().front();
 
-  EXPECT_TRUE(model.FindMetadata(kByteCodeMetadataKey));
+    EXPECT_EQ(op->OpCode(), kLiteRtOpCodeTflCustom);
+    EXPECT_TRUE(model.FindOpAsset(op));
+  }
+
+  {
+    auto& subgraph = model.Subgraph(1);
+    ASSERT_EQ(subgraph.Ops().size(), 1);
+
+    auto* op = subgraph.Ops().front();
+
+    EXPECT_EQ(op->OpCode(), kLiteRtOpCodeTflCustom);
+    EXPECT_TRUE(model.FindOpAsset(op));
+  }
+
   EXPECT_TRUE(model.FindMetadata(kLiteRtBuildStampKey));
 }
 
 TEST(ApplyTest, ApplyPlugins) {
-  litert::Environment::Destroy();
-
   auto model_wrap = testing::LoadTestFileModel("mul_simple.tflite");
   ASSERT_TRUE(model_wrap);
   auto& model = *model_wrap.Get();
 
   const std::array environment_options = {
       litert::Environment::Option{
-          /*.tag=*/litert::Environment::OptionTag::CompilerPluginLibraryPath,
+          /*.tag=*/litert::Environment::OptionTag::CompilerPluginLibraryDir,
           /*.value=*/kTestPluginSearchPath,
       },
   };
-  ASSERT_TRUE(litert::Environment::Create(environment_options));
+  auto env = litert::Environment::Create(environment_options);
+  ASSERT_TRUE(env);
 
   LiteRtHwAccelerators compilation_options = static_cast<LiteRtHwAccelerators>(
-      kLiteRtHwAccelatorCpu | kLiteRtHwAccelatorGpu | kLiteRtHwAccelatorNpu);
+      kLiteRtHwAcceleratorCpu | kLiteRtHwAcceleratorGpu |
+      kLiteRtHwAcceleratorNpu);
   auto new_flatbuffer =
-      litert::internal::ApplyPlugins(&model, compilation_options);
+      litert::internal::ApplyPlugins(env->Get(), &model, compilation_options);
   ASSERT_TRUE(new_flatbuffer);
 
   ASSERT_EQ(model.NumSubgraphs(), 1);
@@ -269,14 +356,12 @@ TEST(ApplyTest, ApplyPlugins) {
   auto& subgraph = *model.MainSubgraph();
   ASSERT_EQ(subgraph.Ops().size(), 1);
 
-  EXPECT_EQ(subgraph.Op(0).OpCode(), kLiteRtOpCodeTflCustom);
-  EXPECT_THAT(subgraph.Op(0).CustomOptions().StrView(),
-              HasSubstr(kByteCodeMetadataKey));
+  auto* op = subgraph.Ops().front();
 
-  EXPECT_TRUE(model.FindMetadata(kByteCodeMetadataKey));
+  EXPECT_EQ(op->OpCode(), kLiteRtOpCodeTflCustom);
+  EXPECT_TRUE(model.FindOpAsset(op));
+
   EXPECT_TRUE(model.FindMetadata(kLiteRtBuildStampKey));
-
-  litert::Environment::Destroy();
 }
 
 }  // namespace

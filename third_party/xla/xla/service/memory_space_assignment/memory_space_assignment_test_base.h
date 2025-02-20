@@ -42,6 +42,7 @@ limitations under the License.
 #include "xla/service/memory_space_assignment/memory_space_assignment.h"
 #include "xla/service/memory_space_assignment/options.h"
 #include "xla/service/memory_space_assignment/prefetch_interval_picker.h"
+#include "xla/service/memory_space_assignment/utils.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tests/hlo_test_base.h"
@@ -108,6 +109,7 @@ class MemorySpaceAssignmentTestBase : public HloTestBase {
     options.alternate_memory_space = kAlternateMemorySpace;
     options.max_outstanding_prefetches = -1;
     options.max_outstanding_evictions = -1;
+    options.shape_size_fn = HloCostAnalysis::DefaultShapeSize;
 
     return options;
   }
@@ -115,7 +117,10 @@ class MemorySpaceAssignmentTestBase : public HloTestBase {
   static CostAnalysisOptions DefaultCostAnalysisOptions() {
     CostAnalysisOptions options;
     options.default_mem_bandwidth_bytes_per_second = kDefaultMemBandwidth;
-    options.alternate_mem_bandwidth_bytes_per_second = kAlternateMemBandwidth;
+    options.alternate_mem_read_bandwidth_bytes_per_second =
+        kAlternateMemBandwidth;
+    options.alternate_mem_write_bandwidth_bytes_per_second =
+        kAlternateMemBandwidth;
     return options;
   }
 
